@@ -76,6 +76,7 @@ final class BackupRunner: ObservableObject {
         stats          = Stats()
         progress       = 0
         wasFullBackup  = true
+        var serverError = false
 
         let label  = profile.label
         let source = profile.sourcePath
@@ -173,10 +174,13 @@ final class BackupRunner: ObservableObject {
                     stats.inherited = result.inherited
                     stats.skipped   = result.skipped
                     log(L("runner.absorb_done", result.inherited, result.skipped), .success)
+                } catch let err as NSError where (500..<600).contains(err.code) {
+                    log(L("runner.absorb_server_error", err.localizedDescription), .error)
+                    serverError = true
                 } catch {
                     log(L("runner.absorb_error", error.localizedDescription), .warning)
                 }
-                await finalizeVersion(label: label, versionKey: versionKey, ok: true)
+                await finalizeVersion(label: label, versionKey: versionKey, ok: !serverError)
                 let walkedPaths = Set(scannedFiles.map { $0.url.path })
                 await hashCache.prune(keepingPaths: walkedPaths)
                 await hashCache.save()
@@ -447,6 +451,9 @@ final class BackupRunner: ObservableObject {
                                                versionKey: versionKey,
                                                paths: serverPaths)
             if synced { log(L("runner.sync_done"), .success) }
+        } catch let err as NSError where (500..<600).contains(err.code) {
+            log(L("runner.sync_server_error", err.localizedDescription), .error)
+            serverError = true
         } catch {
             log(L("runner.sync_skipped", error.localizedDescription), .warning)
         }
@@ -465,6 +472,9 @@ final class BackupRunner: ObservableObject {
                     stats.inherited = result.inherited
                     stats.skipped   = result.skipped
                     log(L("runner.absorb_done", result.inherited, result.skipped), .success)
+                } catch let err as NSError where (500..<600).contains(err.code) {
+                    log(L("runner.absorb_server_error", err.localizedDescription), .error)
+                    serverError = true
                 } catch {
                     log(L("runner.absorb_error", error.localizedDescription), .warning)
                 }
@@ -472,7 +482,7 @@ final class BackupRunner: ObservableObject {
         }
 
         // 8. Finalize
-        await finalizeVersion(label: label, versionKey: versionKey, ok: stats.errors == 0)
+        await finalizeVersion(label: label, versionKey: versionKey, ok: stats.errors == 0 && !serverError)
 
         // Persist hash cache pruned to the current file set
         let walkedPaths = Set(scannedFiles.map { $0.url.path })
@@ -636,8 +646,10 @@ final class BackupRunner: ObservableObject {
         guard let versions = try? await api.fetchVersions(label: label),
               let doneVersion = versions.first(where: { $0.isDone })
         else { return ([:], nil) }
-        guard let files = try? await api.fetchFiles(label: label, versionKey: doneVersion.versionKey)
-        else { return ([:], nil) }
+        guard let files = try? await api.fetchFiles(label: label, versionKey: doneVersion.versionKey) else {
+            log(L("runner.cache_load_failed"), .warning)
+            return ([:], doneVersion.versionKey)
+        }
         var cache: [String: FileCache] = [:]
         cache.reserveCapacity(files.count)
         for file in files {

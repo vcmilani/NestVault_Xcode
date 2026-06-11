@@ -92,7 +92,10 @@
 "runner.summary"               = "Enviados: %d  Registrados: %d  Cacheados: %d  Ignorados: %d  Erros: %d";
 "runner.absorb_done"           = "Absorb: %d arquivos herdados, %d ignorados";
 "runner.absorb_error"          = "Absorb falhou: %@";
+"runner.absorb_server_error"   = "Absorb: erro interno do servidor — versão marcada como falhou: %@";
+"runner.sync_server_error"     = "Sync: erro interno do servidor — versão marcada como falhou: %@";
 "runner.accumulate_no_prev"    = "Modo acumulativo: nenhuma versão anterior encontrada, absorb ignorado.";
+"runner.cache_load_failed"     = "Cache de versão anterior indisponível — absorb continuará sem fast-path.";
 "runner.accumulate_skipped_errors" = "Modo acumulativo: absorb ignorado devido a erros de upload.";
 "runner.smart_skip_detected"   = "Nenhuma alteração detectada (%d arquivos). Usando smart skip.";
 "runner.smart_skip_forced_full" = "Smart skip: último backup completo há mais de 1 semana — executando backup completo para verificar o servidor.";

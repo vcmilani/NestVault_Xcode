@@ -92,7 +92,10 @@
 "runner.summary"               = "Uploaded: %d  Registered: %d  Cached: %d  Ignored: %d  Errors: %d";
 "runner.absorb_done"           = "Absorb: %d files inherited, %d skipped";
 "runner.absorb_error"          = "Absorb failed: %@";
+"runner.absorb_server_error"   = "Absorb: server internal error — version marked as failed: %@";
+"runner.sync_server_error"     = "Sync: server internal error — version marked as failed: %@";
 "runner.accumulate_no_prev"    = "Accumulative mode: no previous version found, skipping absorb.";
+"runner.cache_load_failed"     = "Previous version cache unavailable — absorb will run without fast-path.";
 "runner.accumulate_skipped_errors" = "Accumulative mode: skipping absorb due to upload errors.";
 "runner.smart_skip_detected"   = "No changes detected (%d files). Using smart skip.";
 "runner.smart_skip_forced_full" = "Smart skip: last full backup is over 1 week old — running full backup to verify server.";
