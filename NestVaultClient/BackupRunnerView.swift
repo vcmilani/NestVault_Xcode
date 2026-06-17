@@ -135,7 +135,7 @@ struct BackupRunnerSheet: View {
                     .tint(.orange)
                 }
                 Button(runner.status == .idle ? "runner.start" : "runner.run_again") {
-                    Task {
+                    let task = Task {
                         let current = store.profiles.first(where: { $0.id == profile.id }) ?? profile
                         schedule.registerManualRunner(runner, profileId: current.id)
                         await runner.run(profile: current)
@@ -145,7 +145,9 @@ struct BackupRunnerSheet: View {
                             updated.lastFullBackupDate = Date()
                             store.update(updated)
                         }
+                        runner.runTask = nil
                     }
+                    runner.runTask = task
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(runner.status == .running)
