@@ -1,6 +1,8 @@
 import Foundation
 import CryptoKit
 
+private let systemIgnoredNames: Set<String> = [".DS_Store", "Thumbs.db", "desktop.ini"]
+
 @MainActor
 final class BackupRunner: ObservableObject {
 
@@ -131,7 +133,7 @@ final class BackupRunner: ObservableObject {
                 }
                 var files: [ScannedFile] = []
                 while let url = enumerator.nextObject() as? URL {
-                    if excludes.contains(url.lastPathComponent) {
+                    if excludes.contains(url.lastPathComponent) || systemIgnoredNames.contains(url.lastPathComponent) {
                         enumerator.skipDescendants(); continue
                     }
                     let rv = try? url.resourceValues(forKeys: resourceKeys)
