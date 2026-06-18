@@ -1,6 +1,8 @@
 import Foundation
 import CryptoKit
 
+private let systemIgnoredNames: Set<String> = [".DS_Store", "Thumbs.db", "desktop.ini"]
+
 @MainActor
 final class BackupRunner: ObservableObject {
 
@@ -53,6 +55,8 @@ final class BackupRunner: ObservableObject {
     private let api: APIService
     private var isCancelled = false
     private var session = URLSession(configuration: .default)
+    private var scanTask: Task<([ScannedFile], Int, Int, Int), Error>?
+    var runTask: Task<Void, Never>?
 
     private let maxRetries = 3
     private let batchSize  = 100
@@ -62,6 +66,9 @@ final class BackupRunner: ObservableObject {
     func cancel() {
         guard status == .running else { return }
         isCancelled = true
+        status = .cancelled
+        scanTask?.cancel()
+        runTask?.cancel()   // makes URLSession.shared + Task.sleep in finalizeVersion exit instantly
         session.invalidateAndCancel()
         log(L("runner.cancel_requested"), .warning)
     }
@@ -72,6 +79,7 @@ final class BackupRunner: ObservableObject {
         session        = URLSession(configuration: .default)
         status         = .running
         isCancelled    = false
+        scanTask       = nil
         entries        = []
         stats          = Stats()
         progress       = 0
@@ -119,34 +127,53 @@ final class BackupRunner: ObservableObject {
         //    so the classification step below needs no extra attributesOfItem calls.
         let excludes = profile.excludes
         let scannedFiles: [ScannedFile]
+        var scanSkippedByExclude = 0
+        var scanSkippedByType    = 0
+        var scanTotalYielded     = 0
         do {
-            scannedFiles = try await Task.detached(priority: .userInitiated) {
+            scanTask = Task.detached(priority: .userInitiated) {
                 let resourceKeys: Set<URLResourceKey> = [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey, .contentModificationDateKey, .fileSizeKey]
-                guard let enumerator = FileManager.default.enumerator(
-                    at: URL(fileURLWithPath: source),
-                    includingPropertiesForKeys: Array(resourceKeys),
-                    options: []
-                ) else {
-                    throw NSError(domain: "NestVault", code: -1, userInfo: [:])
-                }
                 var files: [ScannedFile] = []
-                while let url = enumerator.nextObject() as? URL {
-                    if excludes.contains(url.lastPathComponent) {
-                        enumerator.skipDescendants(); continue
+                var byExclude = 0
+                var byType    = 0
+                var totalYielded = 0
+                // BFS with contentsOfDirectory — avoids FileManager.enumerator stopping
+                // silently mid-tree on certain macOS app contexts (enumerator was yielding
+                // only ~1915 of 5136 items despite errorHandler returning true).
+                var queue: [URL] = [URL(fileURLWithPath: source, isDirectory: true)]
+                while !queue.isEmpty {
+                    if Task.isCancelled { break }
+                    let dir = queue.removeLast()
+                    let items = (try? FileManager.default.contentsOfDirectory(
+                        at: dir,
+                        includingPropertiesForKeys: Array(resourceKeys),
+                        options: []
+                    )) ?? []
+                    for url in items {
+                        totalYielded += 1
+                        let name = url.lastPathComponent
+                        if excludes.contains(name) || systemIgnoredNames.contains(name) {
+                            byExclude += 1; continue
+                        }
+                        let rv = try? url.resourceValues(forKeys: resourceKeys)
+                        if rv?.isDirectory == true {
+                            if rv?.isSymbolicLink != true { queue.append(url) }
+                            continue
+                        }
+                        if rv?.isRegularFile != true {
+                            byType += 1; continue
+                        }
+                        let mtime = rv?.contentModificationDate?.timeIntervalSince1970 ?? 0
+                        let size  = Int64(rv?.fileSize ?? 0)
+                        files.append(ScannedFile(url: url, mtime: mtime, size: size))
                     }
-                    let rv = try? url.resourceValues(forKeys: resourceKeys)
-                    // Skip directories, symlinks-to-directories, and anything that isn't a plain regular file
-                    if rv?.isSymbolicLink == true && rv?.isDirectory == true {
-                        enumerator.skipDescendants(); continue
-                    }
-                    if rv?.isRegularFile != true { continue }
-                    let mtime = rv?.contentModificationDate?.timeIntervalSince1970 ?? 0
-                    let size  = Int64(rv?.fileSize ?? 0)
-                    files.append(ScannedFile(url: url, mtime: mtime, size: size))
                 }
-                return files
-            }.value
+                return (files, byExclude, byType, totalYielded)
+            }
+            (scannedFiles, scanSkippedByExclude, scanSkippedByType, scanTotalYielded) = try await scanTask!.value
+            scanTask = nil
         } catch {
+            scanTask = nil
             log(L("runner.source_unreadable", source), .error)
             await finalizeVersion(label: label, versionKey: versionKey, ok: false)
             DockProgress.shared.update(progress: nil)
@@ -156,6 +183,13 @@ final class BackupRunner: ObservableObject {
         stats.total = scannedFiles.count
         log(L("runner.files_found", scannedFiles.count), .info)
 
+        if isCancelled {
+            await finalizeVersion(label: label, versionKey: versionKey, ok: false)
+            progress = 0; currentFile = ""; status = .cancelled
+            DockProgress.shared.update(progress: nil)
+            log(L("runner.cancelled"), .warning); return
+        }
+
         // Smart skip: if enabled, 0 local changes detected, and last full backup is within 7 days,
         // skip classify/execute/sync and absorb directly from the previous version.
         if profile.smartSkip, let prevDoneKey {
@@ -163,8 +197,12 @@ final class BackupRunner: ObservableObject {
             let overdue   = profile.lastFullBackupDate.map {
                 Date().timeIntervalSince($0) > 7 * 86_400
             } ?? true   // nil = never ran a full backup → must run full
+            // Guard: prevDoneKey's file count must match the current scan. Without this check, a
+            // failed backup can leave hashCache with more entries than prevDoneKey's version has,
+            // causing smart skip to absorb a stale (smaller) version and silently drop new files.
+            let prevCountMatches = cache.count == scannedFiles.count
 
-            if noChanges && !overdue {
+            if noChanges && !overdue && prevCountMatches {
                 log(L("runner.smart_skip_detected", scannedFiles.count), .info)
                 wasFullBackup = false
                 do {
