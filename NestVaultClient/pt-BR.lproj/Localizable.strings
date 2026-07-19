@@ -391,3 +391,8 @@
 "settings.about.cleanup_value"   = "Keep N versões mais recentes";
 "cleanup.label_versions"         = "%@  (%d versões)";
 "profile.default_name"           = "Novo Backup";
+
+/* Accumulative inherit (absorb replaces per-file registers) */
+"runner.inherit_planned"        = "Modo acumulativo: %d arquivo(s) inalterado(s) serão herdados via absorb (sem re-registro)";
+"runner.inherit_shortfall"      = "Absorb herdou menos que o necessário (%d retidos, %d herdados) — versão marcada como falha";
+"runner.absorb_required_failed" = "Absorb falhou com %d arquivo(s) aguardando herança — versão marcada como falha: %@";

@@ -375,6 +375,31 @@ final class BackupRunner: ObservableObject {
 
         log(L("runner.classifying", fastEntries.count, slowEntries.count), .info)
 
+        // ── Accumulative inherit ─────────────────────────────────────────────
+        // In accumulate mode the final absorb inherits from the previous done
+        // version every path absent from this one. Unchanged files whose exact
+        // content (same serverPath + sha256) is already in that version therefore
+        // don't need a per-file register round-trip — we withhold them and let
+        // absorb bring them in with one request. Files only known to the local
+        // hash cache (never landed in a done version) still register normally.
+        var registerEntries = fastEntries
+        var inheritPlanned  = 0
+        if profile.accumulate, prevDoneKey != nil {
+            var toRegister: [(url: URL, serverPath: String, sha256: String, mtime: Double)] = []
+            toRegister.reserveCapacity(fastEntries.count)
+            for f in fastEntries {
+                if let prev = cache[f.serverPath], prev.sha256 == f.sha256 {
+                    inheritPlanned += 1
+                } else {
+                    toRegister.append(f)
+                }
+            }
+            registerEntries = toRegister
+            if inheritPlanned > 0 {
+                log(L("runner.inherit_planned", inheritPlanned), .info)
+            }
+        }
+
         // ── Pipelined processing: hash → check → transfer ────────────────────
         // A producer hashes slow files and classifies them against the server in
         // batches while the executor registers/uploads concurrently — CPU (hash)
@@ -392,16 +417,16 @@ final class BackupRunner: ObservableObject {
 
         execStart      = 0
         execUnitsTotal = max(hashWork + checkOps * rtUnit + slowExecEst
-                             + Double(fastEntries.count) * rtUnit, 1)
+                             + Double(registerEntries.count) * rtUnit, 1)
         execUnitsDone  = 0
         runPhase       = .processing
-        phaseTotal     = slowEntries.count + fastEntries.count
+        phaseTotal     = slowEntries.count + registerEntries.count
         phaseProcessed = 0
         currentFile    = ""
 
         let (workStream, workCont) = AsyncStream.makeStream(of: WorkItem.self)
         let producer = Task { [weak self] in
-            await self?.produceWork(slowEntries: slowEntries, fastEntries: fastEntries,
+            await self?.produceWork(slowEntries: slowEntries, fastEntries: registerEntries,
                                     label: label, versionKey: versionKey,
                                     useBatch: useBatch, hashCache: hashCache,
                                     accumulator: accumulator, continuation: workCont)
@@ -454,11 +479,25 @@ final class BackupRunner: ObservableObject {
                         versionKey: versionKey, sourceVersionKey: prevDoneKey)
                     stats.inherited = result.inherited
                     log(L("runner.absorb_done", result.inherited, result.skipped), .success)
+                    // Withheld unchanged files count on this absorb — it must inherit
+                    // at least that many paths, or the version is missing files.
+                    if result.inherited < inheritPlanned {
+                        log(L("runner.inherit_shortfall", inheritPlanned, result.inherited), .error)
+                        serverError = true
+                    }
                 } catch let err as NSError where (500..<600).contains(err.code) {
                     log(L("runner.absorb_server_error", err.localizedDescription), .error)
                     serverError = true
                 } catch {
-                    log(L("runner.absorb_error", error.localizedDescription), .warning)
+                    if inheritPlanned > 0 {
+                        // Absorb was load-bearing: without it the withheld unchanged
+                        // files would silently vanish from this version.
+                        log(L("runner.absorb_required_failed", inheritPlanned,
+                              error.localizedDescription), .error)
+                        serverError = true
+                    } else {
+                        log(L("runner.absorb_error", error.localizedDescription), .warning)
+                    }
                 }
             }
         }

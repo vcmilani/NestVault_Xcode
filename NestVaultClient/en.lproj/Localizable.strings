@@ -391,3 +391,8 @@
 "settings.about.cleanup_value"   = "Keep N most recent versions";
 "cleanup.label_versions"         = "%@  (%d versions)";
 "profile.default_name"           = "New Backup";
+
+/* Accumulative inherit (absorb replaces per-file registers) */
+"runner.inherit_planned"        = "Accumulative mode: %d unchanged file(s) will be inherited via absorb (no re-register)";
+"runner.inherit_shortfall"      = "Absorb inherited fewer than required (%d withheld, %d inherited) — version marked as failed";
+"runner.absorb_required_failed" = "Absorb failed with %d file(s) awaiting inheritance — version marked as failed: %@";
