@@ -60,6 +60,14 @@ final class BackupRunner: ObservableObject {
         case cachedRegister(sha256: String)   // mtime+size cache hit — counted as "cached"
         case register(sha256: String)          // contentExists = true
         case upload                            // contentExists = false
+
+        /// Non-nil for the two register variants — the ones /register/batch can carry.
+        var registerSha: String? {
+            switch self {
+            case .cachedRegister(let sha), .register(let sha): return sha
+            default: return nil
+            }
+        }
     }
 
     fileprivate struct ScannedFile {
@@ -92,6 +100,7 @@ final class BackupRunner: ObservableObject {
 
     private let maxRetries = 3
     private let batchSize  = 100
+    private let registerBatchSize = 200   // /register/batch aceita até 500 (servidor v7.8+)
 
     // Work-unit model: progress is weighted by estimated cost in "byte-equivalents".
     // A server round-trip (register/check) costs rtUnit bytes; hashing a byte costs
@@ -361,6 +370,9 @@ final class BackupRunner: ObservableObject {
         let useBatch = api.supportsBatch()
         if useBatch { log(L("runner.batch_mode"), .info) }
 
+        let useBatchRegister = api.supportsBatchRegister()
+        if useBatchRegister { log(L("runner.batch_register_mode"), .info) }
+
         // Split into cache hits and files that need hashing — one actor hop for the
         // whole file list (a per-file await here costs 2 MainActor↔actor hops per file).
         let (fastEntries, slowEntries) = await hashCache.classify(
@@ -434,6 +446,7 @@ final class BackupRunner: ObservableObject {
         await executeWork(stream: workStream,
                           concurrencyLimit: max(1, profile.workers),
                           label: label, versionKey: versionKey,
+                          useBatchRegister: useBatchRegister,
                           accumulator: accumulator)
         await producer.value
 
@@ -669,54 +682,185 @@ final class BackupRunner: ObservableObject {
     }
 
     /// Executor: consumes work items as the producer emits them, keeping at most
-    /// `concurrencyLimit` transfers in flight.
+    /// `concurrencyLimit` tasks in flight. With a v7.8+ server, register items are
+    /// coalesced into /register/batch requests (one commit per batch server-side)
+    /// instead of one request per file; uploads and skips run individually as before.
+    /// A batch occupies one worker slot, so batches and uploads share the pool.
     private func executeWork(
         stream: AsyncStream<WorkItem>,
         concurrencyLimit: Int,
         label: String, versionKey: String,
+        useBatchRegister: Bool,
         accumulator: StatsAccumulator
     ) async {
-        await withTaskGroup(of: Void.self) { group in
-            var inFlight  = 0
-            var completed = 0
+        await withTaskGroup(of: Int.self) { group in
+            var inFlight       = 0
+            var completed      = 0
+            var registerBuffer: [WorkItem] = []
 
             for await item in stream {
                 guard !isCancelled else { break }
+
+                // Batchable registers accumulate until a full batch is ready.
+                if useBatchRegister, item.action.registerSha != nil {
+                    registerBuffer.append(item)
+                    guard registerBuffer.count >= registerBatchSize else { continue }
+                }
+
                 if inFlight >= concurrencyLimit {
-                    await group.next()
+                    completed += await group.next() ?? 0
                     inFlight  -= 1
-                    completed += 1
                     await refreshExecCounters(completed: completed, accumulator: accumulator)
                 }
-                group.addTask { [weak self] in
-                    guard let self else { return }
-                    do {
-                        let actionStr = try await self.executeActionWithRetry(
-                            item.action, url: item.url,
-                            label: label, versionKey: versionKey,
-                            serverPath: item.serverPath, mtime: item.mtime,
-                            units: item.units)
-                        await accumulator.record(action: actionStr)
-                    } catch {
-                        if !(error is CancellationError) {
-                            await accumulator.recordError()
-                            await MainActor.run {
-                                self.log(L("runner.file_error", item.url.path,
-                                           error.localizedDescription), .error)
+
+                if useBatchRegister, item.action.registerSha != nil {
+                    let batch = registerBuffer
+                    registerBuffer = []
+                    group.addTask { [weak self] in
+                        await self?.executeRegisterBatch(batch, label: label,
+                                                         versionKey: versionKey,
+                                                         accumulator: accumulator) ?? 0
+                    }
+                } else {
+                    group.addTask { [weak self] in
+                        guard let self else { return 1 }
+                        do {
+                            let actionStr = try await self.executeActionWithRetry(
+                                item.action, url: item.url,
+                                label: label, versionKey: versionKey,
+                                serverPath: item.serverPath, mtime: item.mtime,
+                                units: item.units)
+                            await accumulator.record(action: actionStr)
+                        } catch {
+                            if !(error is CancellationError) {
+                                await accumulator.recordError()
+                                await MainActor.run {
+                                    self.log(L("runner.file_error", item.url.path,
+                                               error.localizedDescription), .error)
+                                }
                             }
                         }
+                        return 1
                     }
                 }
                 inFlight += 1
             }
+
+            // Flush the final partial batch.
+            if !isCancelled, !registerBuffer.isEmpty {
+                if inFlight >= concurrencyLimit {
+                    completed += await group.next() ?? 0
+                    inFlight  -= 1
+                    await refreshExecCounters(completed: completed, accumulator: accumulator)
+                }
+                let batch = registerBuffer
+                registerBuffer = []
+                group.addTask { [weak self] in
+                    await self?.executeRegisterBatch(batch, label: label,
+                                                     versionKey: versionKey,
+                                                     accumulator: accumulator) ?? 0
+                }
+                inFlight += 1
+            }
+
             while inFlight > 0 {
-                await group.next()
+                completed += await group.next() ?? 0
                 inFlight  -= 1
-                completed += 1
                 await refreshExecCounters(completed: completed, accumulator: accumulator)
             }
             phaseProcessed = completed
         }
+    }
+
+    /// Sends one /register/batch request for a group of register items and settles
+    /// each one: registered → stats + progress credit; content missing server-side →
+    /// escalated to a full upload (the batch equivalent of the HTTP-400 escalation);
+    /// batch failed after retries → falls back to the per-file register path.
+    /// Returns how many items were settled (feeds the "x of y" counter).
+    private func executeRegisterBatch(
+        _ batch: [WorkItem],
+        label: String, versionKey: String,
+        accumulator: StatsAccumulator
+    ) async -> Int {
+        let items = batch.map {
+            RegisterBatchItem(originalPath: $0.serverPath,
+                              sha256: $0.action.registerSha ?? "",
+                              mtime: $0.mtime)
+        }
+
+        var response: RegisterBatchResponse?
+        for attempt in 1...maxRetries {
+            guard !isCancelled else { break }
+            do {
+                response = try await api.registerBatch(
+                    session: session, label: label,
+                    versionKey: versionKey, items: items)
+                break
+            } catch {
+                guard !isCancelled, attempt < maxRetries else {
+                    log(L("runner.register_batch_error", error.localizedDescription), .warning)
+                    break
+                }
+                try? await Task.sleep(nanoseconds: UInt64(500_000_000) * UInt64(attempt))
+            }
+        }
+
+        guard let response else {
+            // Fallback: individual register path (same philosophy as batch-check errors).
+            var settled = 0
+            for item in batch {
+                guard !isCancelled else { break }
+                do {
+                    let actionStr = try await executeActionWithRetry(
+                        item.action, url: item.url,
+                        label: label, versionKey: versionKey,
+                        serverPath: item.serverPath, mtime: item.mtime,
+                        units: item.units)
+                    await accumulator.record(action: actionStr)
+                } catch {
+                    if !(error is CancellationError) {
+                        await accumulator.recordError()
+                        log(L("runner.file_error", item.url.path,
+                              error.localizedDescription), .error)
+                    }
+                }
+                settled += 1
+            }
+            return settled
+        }
+
+        // Results are positional (the server appends them in request order), which is
+        // the only correct alignment when the batch contains duplicate paths.
+        var settled = 0
+        for (idx, result) in response.results.enumerated() where idx < batch.count {
+            let item = batch[idx]
+            if result.registered {
+                if case .cachedRegister = item.action {
+                    await accumulator.record(action: "cached")
+                } else {
+                    await accumulator.record(action: "register")
+                }
+                addExecUnits(item.units)
+            } else {
+                guard !isCancelled else { break }
+                do {
+                    let actionStr = try await executeActionWithRetry(
+                        .upload, url: item.url,
+                        label: label, versionKey: versionKey,
+                        serverPath: item.serverPath, mtime: item.mtime,
+                        units: item.units)
+                    await accumulator.record(action: actionStr)
+                } catch {
+                    if !(error is CancellationError) {
+                        await accumulator.recordError()
+                        log(L("runner.file_error", item.url.path,
+                              error.localizedDescription), .error)
+                    }
+                }
+            }
+            settled += 1
+        }
+        return settled
     }
 
     /// Throttled refresh of the "x of y" counter and the stats row during execution.

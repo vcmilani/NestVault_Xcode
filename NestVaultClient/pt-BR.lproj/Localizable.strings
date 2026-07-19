@@ -396,3 +396,7 @@
 "runner.inherit_planned"        = "Modo acumulativo: %d arquivo(s) inalterado(s) serão herdados via absorb (sem re-registro)";
 "runner.inherit_shortfall"      = "Absorb herdou menos que o necessário (%d retidos, %d herdados) — versão marcada como falha";
 "runner.absorb_required_failed" = "Absorb falhou com %d arquivo(s) aguardando herança — versão marcada como falha: %@";
+
+/* Batch register (server v7.8+) */
+"runner.batch_register_mode"  = "Registro em lote ativado (servidor v7.8+)";
+"runner.register_batch_error" = "Erro no registro em lote (caindo para registro individual): %@";

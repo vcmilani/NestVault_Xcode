@@ -83,6 +83,32 @@ final class APIService: ObservableObject {
         return (parts[0], parts[1]) >= (2, 6)
     }
 
+    /// /register/batch exists from server 7.8 — older servers fall back to
+    /// one register request per file.
+    func supportsBatchRegister() -> Bool {
+        let parts = serverVersion.split(separator: ".").compactMap { Int($0) }
+        guard parts.count >= 2 else { return false }
+        return (parts[0], parts[1]) >= (7, 8)
+    }
+
+    func registerBatch(
+        session: URLSession,
+        label: String,
+        versionKey: String,
+        items: [RegisterBatchItem]
+    ) async throws -> RegisterBatchResponse {
+        let body = try JSONEncoder().encode(
+            RegisterBatchRequest(backupLabel: label, versionKey: versionKey, files: items))
+        var req = try buildRequest("/register/batch", method: "POST", body: body)
+        req.timeoutInterval = 60
+        let (data, response) = try await session.data(for: req)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            let code = (response as? HTTPURLResponse)?.statusCode ?? -1
+            throw apiError(code, String(data: data, encoding: .utf8) ?? "")
+        }
+        return try JSONDecoder().decode(RegisterBatchResponse.self, from: data)
+    }
+
     func checkBatch(
         session: URLSession,
         label: String,
