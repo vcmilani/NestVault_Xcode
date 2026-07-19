@@ -400,3 +400,40 @@
 /* Batch register (server v7.8+) */
 "runner.batch_register_mode"  = "Batch register enabled (server v7.8+)";
 "runner.register_batch_error" = "Batch register failed (falling back to individual registers): %@";
+
+/* Restore */
+"backups.restore_version"       = "Restore version…";
+"backups.restore_selected"      = "Restore %d selected";
+"backups.restore_filtered"      = "Restore %d shown";
+"restore.header.info"           = "Version %@ — %d file(s) · %@";
+"restore.start"                 = "Start restore";
+"restore.version_warning"       = "This version is not complete (status ≠ done) — some files may be missing.";
+"restore.dest.label"            = "Destination";
+"restore.dest.original"         = "Original location";
+"restore.dest.choose"           = "Choose folder";
+"restore.dest.choose_btn"       = "Choose…";
+"restore.dest.none"             = "No folder selected";
+"restore.no_profile_hint"       = "No profile with this label — choose a destination folder.";
+"restore.policy.label"          = "Existing files";
+"restore.policy.keep"           = "Keep existing (never overwrite)";
+"restore.policy.overwrite_changed" = "Overwrite changed only";
+"restore.policy.overwrite_all"  = "Overwrite everything";
+"restore.running"               = "Restoring";
+"restore.running_label"         = "Downloading files…";
+"restore.stat.restored"         = "Restored";
+"restore.stat.skipped"          = "Skipped";
+"restore.stat.errors"           = "Errors";
+"restore.starting"              = "Starting restore: %@ — version %@";
+"restore.dest"                  = "Destination: %@";
+"restore.files_count"           = "%d file(s) to restore (%@)";
+"restore.plan_skipped_system"   = "%d system file(s) ignored";
+"restore.unsafe_path"           = "Unsafe path skipped (outside destination): %@";
+"restore.duplicate_paths"       = "%d duplicate path(s) in selection — last one wins";
+"restore.skipped_identical"     = "Identical, skipped: %@";
+"restore.kept_modified"         = "Locally modified — kept: %@";
+"restore.integrity_failed"      = "SHA-256 verification failed: %@";
+"restore.file_error"            = "Error: %@ — %@";
+"restore.cancel_requested"      = "Cancellation requested…";
+"restore.cancelled"             = "Restore cancelled — already restored files were kept.";
+"restore.partial_warning"       = "Partial restore: %d file(s) with errors.";
+"restore.summary"               = "Restored: %d  Skipped: %d  Errors: %d";
