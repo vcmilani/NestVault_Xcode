@@ -1,4 +1,4 @@
-# NestVault — macOS Client
+# NestVault — macOS Client  `v4.0.0`
 
 Native macOS SwiftUI client for the [NestVault](https://github.com/vcmilani/NestVault) self-hosted backup server.
 
@@ -11,7 +11,7 @@ Native macOS SwiftUI client for the [NestVault](https://github.com/vcmilani/Nest
 | macOS | 14.0 (Sonoma) |
 | Xcode | 15.0 |
 | Swift | 5.9 |
-| Server | backup_files v2.6+ |
+| Server | backup_files v2.6+ (mínimo funcional — batch check) · v7.8+ recomendado (habilita `/register/batch`) |
 
 ---
 
@@ -27,8 +27,8 @@ NestVault_Xcode/
     ├── # Entry & Core
     ├── BackupVaultApp.swift       # App entry · MenuBarExtra · Settings scene
     ├── ContentView.swift          # Main window · fixed sidebar · NavigationSplitView
-    ├── Models.swift               # All data models (v2.6 API contract + BackupSchedule)
-    ├── APIService.swift           # Network layer · backoff-aware checkHealth · batch check
+    ├── Models.swift               # All data models — check/register batch, absorb, BackupSchedule
+    ├── APIService.swift           # Network layer · backoff-aware checkHealth · batch check/register · Keychain-backed API key
     ├── ConfigStore.swift          # Local profile persistence (UserDefaults)
     │
     ├── # Views
@@ -41,7 +41,7 @@ NestVault_Xcode/
     ├── PlaceholderView.swift      # ContentUnavailableView substitute (macOS 13/14)
     │
     ├── # Backup Execution
-    ├── BackupRunner.swift         # Single backup engine · binary upload · dock progress
+    ├── BackupRunner.swift         # Pipelined backup engine (hash→check→register/upload overlapped) · byte-weighted progress · dock progress
     ├── BackupRunnerView.swift     # Execution sheet with live log and cancel
     ├── BackupQueue.swift          # Sequential queue engine
     ├── BackupQueueView.swift      # Queue sheet with selection UI and per-item progress
@@ -51,7 +51,6 @@ NestVault_Xcode/
     ├── ScheduleEditor.swift       # Schedule editor (Hourly/Daily/Weekly/Custom)
     ├── LoginItemManager.swift     # SMAppService wrapper for auto-start
     ├── PowerMonitor.swift         # Battery + network interface monitoring
-    ├── BackoffPolicy.swift        # Exponential backoff for failed connections
     ├── DockProgress.swift         # Dock tile progress bar during backups
     │
     ├── # Utilities
@@ -101,6 +100,7 @@ NestVault_Xcode/
 - 4-tab editor: General / Server / Schedule / Exclusions
 - Run individual backup (sheet with live log)
 - Run queue with selection UI and per-item progress
+- Duplicate-run guard: reopening the runner sheet for a profile already backing up (manual, scheduled, or as the current queue item) re-attaches to the active runner instead of starting a second one; the label stays disabled elsewhere until it finishes
 - Delete backup from server (context menu)
 - Python equivalent command preview
 
@@ -113,6 +113,13 @@ NestVault_Xcode/
 - `lastFullBackupDate` is persisted per profile and updated only after a real full backup completes
 - Recommended for backups maintained by a single client machine (no concurrent writers)
 
+### Accumulate Mode
+- Optional per-profile toggle: **Accumulate** (`profile.accumulate`) — for archives that are never fully present on the client at once (e.g. a photo library spread across external drives)
+- On finalize, the client calls `POST /absorb` with the previous done version as source: the server copies every `VersionFile` absent from the current version (by `original_path`) into it, so deleted-from-client files are preserved instead of dropped
+- **Client-side optimization:** unchanged files whose exact content (same server path + sha256) already exists in the previous done version are withheld from the register pipeline entirely and inherited by that same absorb call — zero register round-trips for them, instead of one request each
+- **Safety guard:** once files are withheld this way, absorb becomes structural rather than best-effort — if it fails, or inherits fewer paths than were withheld, the version is marked `failed` rather than silently missing files
+- Profiles without a previous done version, or where the previous version's file cache is unavailable, fall back to registering every file individually (no withholding)
+
 ### Scheduling
 - 5 modes: **Disabled / Hourly / Daily / Weekly / Custom (minutes)**
 - Daily and Weekly respect a configured time-of-day
@@ -121,6 +128,8 @@ NestVault_Xcode/
 - `ScheduleManager` checks every 30s with a `Timer`
 - Respects network reachability, battery state, and active backup lock
 - Shows next run date in editor and last run time in detail view
+- A schedule that has never run anchors to the moment it was enabled (not to the distant past), so a freshly configured daily/weekly schedule fires at its configured time instead of immediately
+- Local notifications (`UserNotifications`) report completion or failure for scheduled individual backups and scheduled queue runs — the only reliable signal while the app runs as a menu-bar accessory, since the Dock bounce is invisible without a Dock icon
 
 ### Cleanup
 - Mode: all backups or specific label
@@ -141,7 +150,7 @@ NestVault_Xcode/
 
 ---
 
-## API Contract (v2.6)
+## API Contract (v2.6 baseline · v7.8+ recommended)
 
 ### Endpoints
 
@@ -155,6 +164,7 @@ NestVault_Xcode/
 | `POST` | `/backups/{label}/versions` | Create version (`version_key`) |
 | `POST` | `/check` | Check single file: returns `needs_upload`, `content_exists` |
 | `POST` | `/check/batch` | Check up to 100 files in one request (v2.6+) |
+| `POST` | `/register/batch` | Register up to 500 files whose content already exists in one request — one server commit per batch instead of one per file (v7.8+; client batches at 200) |
 | `POST` | `/upload` | Upload file (binary) or register (header only) |
 | `POST` | `/sync` | Mark absent files as deleted (`existing_paths`) |
 | `PATCH` | `/backups/{label}/versions/{key}` | Finalize version (`status: done/failed`) |
@@ -191,31 +201,32 @@ X-Mtime:           <epoch float>
 
 ## Backup Engine
 
-The `BackupRunner` performs backups in two phases:
+The `BackupRunner` walks the source tree once (BFS over `contentsOfDirectory` with `includingPropertiesForKeys` — `mtime`, `size`, `isDirectory` — in a single kernel pass), splits files into cache hits (matching mtime+size against the previous version or the local hash cache) and files needing a hash, then runs the rest as a **pipeline** instead of strict sequential phases:
 
-**Phase 1 — Classify**
-1. Walk the source directory once using `FileManager.enumerator` with `includingPropertiesForKeys` (`mtime`, `size`, `isDirectory`) — a single kernel `getattrlistbulk` pass.
-2. Files matching the previous version's `mtime + size` are fast-tracked (no re-hash).
-3. Remaining files are SHA-256 hashed in parallel.
-4. Hashed files are classified via `POST /check/batch` (up to 100 files per request).
-
-**Phase 2 — Execute**
-- Files marked `skip`: ignored.
-- Files marked `register`: `POST /upload` with SHA-256 header only (no body).
-- Files marked `upload`: `POST /upload` with binary body.
-- Configurable concurrency (`workers`), exponential retry (3 attempts).
+- A **producer** hashes changed files in parallel (SHA-256, streamed in 4 MB chunks) and, as each batch of hashes completes, classifies it against the server (`POST /check/batch`) — CPU (hashing) and network (classification) overlap instead of waiting on each other.
+- Cache hits and classified "register" items are coalesced into `/register/batch` requests (batches of 200) when the server supports it (v7.8+); otherwise they fall back to individual `POST /upload` register calls. A batch item whose content turns out missing server-side escalates to a full upload; a batch that fails after retries falls back to per-file registers.
+- Files needing new content upload via `POST /upload` with a binary body, streamed directly from disk with configurable concurrency (`workers`) and exponential retry (3 attempts).
+- **Progress** is a single pool of byte-equivalent units spanning hashing + classification + transfer (a server round-trip costs a fixed unit; upload cost is the file's actual size). It only moves forward, and is throttled to ~10 updates/sec to stay smooth with tens of thousands of files. Upload progress itself streams in real time via a per-task `URLSessionTaskDelegate` reporting bytes sent, so a single large file no longer stalls the bar.
+- In accumulate mode, files withheld for absorb-inheritance (see **Accumulate Mode** above) skip this pipeline entirely — no hash, no check, no register.
 
 ---
 
 ## Local Persistence
 
+**UserDefaults:**
+
 | Key | Content |
 |-----|---------|
 | `server_url` | Server URL |
-| `api_key` | API Key |
-| `backupProfiles_v1` | JSON array of `BackupProfile` (includes `BackupSchedule`, `lastRun`, `smartSkip`, `lastFullBackupDate`) |
+| `backupProfiles_v1` | JSON array of `BackupProfile` (includes `BackupSchedule`, `lastRun`, `smartSkip`, `accumulate`, `lastFullBackupDate`) |
 | `schedule.pauseOnBattery` | Bool — pause when on battery |
 | `schedule.minBatteryPercent` | Int — minimum battery level to run |
+
+**Keychain** (service `com.vcm.nestvault`):
+
+| Item | Content |
+|------|---------|
+| `api_key` | API Key — no longer stored in UserDefaults. A one-time migration on first launch of this version moves any existing plaintext key from UserDefaults into the Keychain and clears the old value. |
 
 ---
 
@@ -266,3 +277,24 @@ Swagger UI: `http://<pi-ip>:8000/docs`
 | Schedule not running | Battery mode or network | Check Settings → General → System Status |
 | `requiresApproval` on Login Item | macOS needs user consent | Click "Open Settings" in Settings → General |
 | Connection refused | Server offline | `systemctl status backup-server` on the Pi |
+
+---
+
+## Changelog
+
+### 4.0.0
+
+| Componente | Mudança |
+|---|---|
+| **`BackupRunner.swift` — progress model** | Substituído o modelo de pesos fixos (40/60 entre fases) por um pool único de unidades byte-equivalentes; fases visíveis (`preparing/scanning/checking/processing/finalizing`) com contagens ao vivo; UI throttled a ~10 updates/s |
+| **`BackupRunner.swift` — pipeline** | Hash → check → register/upload deixaram de ser fases sequenciais estritas: um produtor faz hash em paralelo e classifica em lotes assim que completa, sobrepondo CPU e rede; um executor consome via `AsyncStream` respeitando o limite de `workers` |
+| **`BackupRunner.swift` — upload progress** | Progresso intra-upload via `URLSessionTaskDelegate` por task (deltas de bytes enviados), eliminando o congelamento da barra durante um único arquivo grande |
+| **`ScheduleManager.swift` — duplicate-run guard** | Reabrir o sheet de um perfil já em backup (manual, agendado, ou item corrente da fila) reanexa ao runner ativo em vez de iniciar um segundo; o label fica bloqueado em outros pontos de entrada até terminar |
+| **`ScheduleManager.swift` — schedule anchors** | Um agendamento nunca executado ancora no momento em que foi habilitado, não no passado distante — agendamentos diário/semanal recém-criados disparam no horário configurado, não imediatamente |
+| **`ScheduleManager.swift` / `BackupNotifier`** | Notificações locais (`UserNotifications`) para conclusão/falha de backups agendados e de fila — sinal confiável já que o bounce do Dock é invisível sem ícone no Dock (app como acessório de menu bar) |
+| **`APIService.swift` — Keychain** | API key migrada de `UserDefaults` (plaintext) para o Keychain (`com.vcm.nestvault`), com migração automática de uma vez na primeira execução |
+| **Limpeza de código morto** | Removidos `BackoffPolicy.swift`, `UploadResponse`, `BackupDeletedResponse`, `stats.total`/`stats.skipped` não utilizados, `PowerMonitor` duplicado em `SettingsView` |
+| **Performance** | Classificação fast/slow e detecção de smart-skip reduzidas de ~2 saltos de actor por arquivo para 1 salto para a lista inteira; `cleanupAll` coleta erros por label em vez de abortar no primeiro; `ForEach` com identidade estável em vez de índice posicional |
+| **Localização e polimento** | Strings PT hardcoded movidas para `Localizable.strings` (pt-BR/en); `onChange(of:perform:)` migrado para a API de dois parâmetros do macOS 14 |
+| **`BackupRunner.swift` — Accumulate Mode** | Modo acumulativo passa a herdar arquivos inalterados via `/absorb` em vez de registrá-los um a um — ver seção **Accumulate Mode** acima |
+| **`APIService.swift`, `BackupRunner.swift` — `/register/batch`** | Cliente adota o endpoint de registro em lote do servidor (v7.8+) — ver **API Contract** e **Backup Engine** acima |
