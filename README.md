@@ -46,6 +46,11 @@ NestVault_Xcode/
     ├── BackupQueue.swift          # Sequential queue engine
     ├── BackupQueueView.swift      # Queue sheet with selection UI and per-item progress
     │
+    ├── # Restore
+    ├── RestoreRunner.swift        # Parallel download engine · SHA-256 verify · zip-slip guard · overwrite policies
+    ├── RestoreView.swift          # Restore sheet: destination/policy picker + live log
+    ├── HashUtil.swift             # Shared streaming SHA-256 (backup dedup + restore integrity check)
+    │
     ├── # Scheduling & System
     ├── ScheduleManager.swift      # Timer-based scheduler · respects power/network
     ├── ScheduleEditor.swift       # Schedule editor (Hourly/Daily/Weekly/Custom)
@@ -92,6 +97,18 @@ NestVault_Xcode/
 - Filter by backup label and file name
 - File table with SHA-256, status, size
 - Delete individual version via context menu
+- **Restore version** from the versions context menu, or **restore a selection/filtered subset** from the files table (multi-select, `.contextMenu(forSelectionType:)`) — see **Restore** below
+
+### Restore
+- Two entry points: "Restore version…" (versions context menu) and per-file/subset restore from the files table (multi-select or currently filtered rows)
+- **Destination:** *Original location* (resolved from the local profile matching the backup label — `sourcePath` + `prefix`; disabled when no matching profile exists) or *Choose folder…* (`NSOpenPanel`); for a partial selection, the destination root is the files' longest common directory so the folder structure isn't recreated from `/`
+- **Overwrite policy:** Keep existing (never overwrite; local file is SHA-256'd and skipped if identical) / Overwrite changed only (default) / Overwrite everything
+- Parallel download (`RestoreRunner`, workers from the source profile or 4), each file verified against its catalogued SHA-256 after download before being committed to disk — a hash mismatch is retried, never silently accepted
+- Retries (3×, exponential backoff) only for transient failures (`503` degraded replicas, network errors); `404`/`410` (unknown/physically gone content) fail immediately per file without blocking the rest
+- Zip-slip guard on every destination path; duplicate destination paths in a selection are de-duplicated (last one wins); original file `mtime` is restored on the written file
+- One failing file never aborts the run — the sheet reports a partial result (restored/skipped/errors) exactly like the backup summary
+- Responsive cancellation (`session.invalidateAndCancel()`); files already committed before cancelling are kept
+- **No server-side changes required** — restore is entirely client-orchestrated against the existing `GET /files` and `GET /files/{file_id}/download` endpoints (decryption, if enabled, happens server-side; the client only ever handles plaintext bytes)
 
 ### My Backups (Local Profiles)
 - Create and manage local backup profiles
@@ -160,6 +177,7 @@ NestVault_Xcode/
 | `GET` | `/backups` | List backups with `version_count`, `file_count`, `total_size_bytes` |
 | `GET` | `/backups/{label}/versions` | List versions |
 | `GET` | `/files?backup_label=&version_key=` | List files |
+| `GET` | `/files/{file_id}/download` | Download one file's content (decrypted server-side if encryption is enabled) — used by Restore |
 | `POST` | `/backups` | Create backup (`label`, `client_name`) |
 | `POST` | `/backups/{label}/versions` | Create version (`version_key`) |
 | `POST` | `/check` | Check single file: returns `needs_upload`, `content_exists` |
@@ -208,6 +226,18 @@ The `BackupRunner` walks the source tree once (BFS over `contentsOfDirectory` wi
 - Files needing new content upload via `POST /upload` with a binary body, streamed directly from disk with configurable concurrency (`workers`) and exponential retry (3 attempts).
 - **Progress** is a single pool of byte-equivalent units spanning hashing + classification + transfer (a server round-trip costs a fixed unit; upload cost is the file's actual size). It only moves forward, and is throttled to ~10 updates/sec to stay smooth with tens of thousands of files. Upload progress itself streams in real time via a per-task `URLSessionTaskDelegate` reporting bytes sent, so a single large file no longer stalls the bar.
 - In accumulate mode, files withheld for absorb-inheritance (see **Accumulate Mode** above) skip this pipeline entirely — no hash, no check, no register.
+
+---
+
+## Restore Engine
+
+The `RestoreRunner` mirrors `BackupRunner`'s structure (published state machine, `StatsAccumulator`-style actor, throttled progress, `cancel()` semantics) but runs the inverse direction — server → disk — against the version's already-fetched `VersionFile` list, with no server-side write:
+
+- **Plan phase** (synchronous): maps each `original_path` to a destination URL — strips the configured prefix, rejects any path that would resolve outside the destination root (zip-slip guard), skips system files (`.DS_Store`, `Thumbs.db`, `desktop.ini`), de-duplicates by destination path.
+- **Execute phase**: sliding-window task group (same pattern as the backup pipeline's executor), concurrency = the matching profile's `workers` or 4. Per file: if the destination already exists and the policy isn't *overwrite everything*, the local file is hashed and the download skipped when it's already byte-identical.
+- Each download goes through `URLSession.download(for:)`, is hashed and verified against the catalogued SHA-256 before being committed — content that doesn't match its recorded hash is treated as a failed attempt and retried, never written to disk.
+- Progress is a single `doneBytes / totalBytes` fraction (sizes are known upfront from the file list), throttled the same way as the backup progress bar.
+- A file's failure (permanent HTTP error, exhausted retries) is recorded and logged but does not stop the run — the final summary reports restored/skipped/error counts, same shape as the backup summary.
 
 ---
 
@@ -298,3 +328,6 @@ Swagger UI: `http://<pi-ip>:8000/docs`
 | **Localização e polimento** | Strings PT hardcoded movidas para `Localizable.strings` (pt-BR/en); `onChange(of:perform:)` migrado para a API de dois parâmetros do macOS 14 |
 | **`BackupRunner.swift` — Accumulate Mode** | Modo acumulativo passa a herdar arquivos inalterados via `/absorb` em vez de registrá-los um a um — ver seção **Accumulate Mode** acima |
 | **`APIService.swift`, `BackupRunner.swift` — `/register/batch`** | Cliente adota o endpoint de registro em lote do servidor (v7.8+) — ver **API Contract** e **Backup Engine** acima |
+| **`RestoreRunner.swift`, `RestoreView.swift` (novo) — Restore** | Nova feature: restaura uma versão inteira ou uma seleção de arquivos do servidor para o disco local. Download paralelo com verificação SHA-256 pós-download, guard anti zip-slip, 3 políticas de sobrescrita (manter/só alterados/tudo), destino "local original" (via perfil correspondente) ou pasta escolhida, cancelamento responsivo e resultado parcial tolerante a falhas por arquivo. Sem mudanças no servidor — usa `GET /files` e `GET /files/{file_id}/download` já existentes — ver **Restore** e **Restore Engine** acima |
+| **`BackupsView.swift` — entradas de restore** | "Restaurar versão…" no menu de contexto das versões; multi-seleção na tabela de arquivos com restore de selecionados ou dos exibidos (filtro ativo) |
+| **`HashUtil.swift` (novo)** | `computeSHA256Streaming` extraído de `BackupRunner` para reuso na verificação de integridade do restore |
