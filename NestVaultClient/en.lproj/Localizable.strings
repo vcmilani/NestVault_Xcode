@@ -101,6 +101,14 @@
 "runner.smart_skip_forced_full" = "Smart skip: last full backup is over 1 week old — running full backup to verify server.";
 "runner.finalize_failed"       = "Could not finalize version on server — will be cleaned up on next server restart";
 
+/* Runner phases (progress bar) */
+"runner.scan_skipped"          = "Skipped during scan: %d excluded, %d by type (links/special)";
+"runner.phase.preparing"       = "Preparing…";
+"runner.phase.scanning"        = "Scanning… %d files found";
+"runner.phase.checking_simple" = "Checking for changes…";
+"runner.phase.processing"      = "Processing files (%d of %d)";
+"runner.phase.finalizing"      = "Finalizing version…";
+
 /* Version detail */
 "version.detail.files"         = "Files";
 "version.detail.size"          = "Size";
@@ -250,8 +258,6 @@
 "runner.start"           = "Start Backup";
 "runner.run_again"       = "Run Again";
 "runner.stop"            = "Stop";
-"runner.cancel"          = "Cancel";
-"runner.close"           = "Close";
 "runner.stat.uploaded"   = "Uploaded";
 "runner.stat.registered" = "Registered";
 "runner.stat.cached"     = "Cached";
@@ -318,7 +324,7 @@
 "cleanup.col.remove"     = "Remove";
 "cleanup.stat.labels"    = "Labels";
 "cleanup.stat.removed"   = "Versions removed";
-"cleanup.stat.freed"     = "Files freed";
+"cleanup.stat.freed"     = "Files removed";
 "cleanup.result_detail"  = "kept: %d  removed: %d  storage: %d";
 "cleanup.confirm_title"  = "Confirm cleanup?";
 "cleanup.confirm_msg"    = "This action is irreversible. %d version(s) will be permanently removed from the server.";
@@ -347,3 +353,50 @@
 "import.parse_error"      = "Command not recognized. Make sure it starts with 'nestvault backup <path>'.";
 "card.cli.copy"           = "Copy";
 "mybackups.import_cmd"    = "Import Command";
+
+/* Concurrency guard + notifications */
+"runner.label_busy"   = "A backup for this label is already running";
+"notify.done_title"   = "Backup finished";
+"notify.done_body"    = "%@ — %d uploaded, %d registered, %d errors";
+"notify.failed_title" = "Backup failed";
+"notify.failed_body"  = "%@ — open NestVault to see the log";
+"notify.queue_title"  = "Backup queue finished";
+"notify.queue_body"   = "%d finished, %d failed";
+
+/* Phase-5 localization: previously hardcoded strings */
+"dashboard.check_settings"       = "Check the URL and API Key in Settings.";
+"dashboard.info.versions.body"   = "Each run creates a version with an automatic timestamp. Keep as many versions of a label as you need — each one captures the folder's complete state at that moment.";
+"dashboard.info.dedup.body"      = "Physical content is stored only once per SHA-256. Identical files across versions or labels share the same block — zero bytes travel over the network when the content already exists.";
+"dashboard.info.isolation.body"  = "Each label has its own set of versions. Backup, restore and cleanup operations are scoped to the label — one backup never interferes with another.";
+"settings.api_key_placeholder"   = "Empty = no authentication";
+"settings.power.ac"              = "AC %d%%";
+"settings.power.battery"         = "Battery %d%%";
+"settings.test_ok"               = "Connected! %d backup(s) found.";
+"settings.test_fail"             = "Connection failed.";
+"settings.tip.api_key"           = "The API Key must match the BACKUP_API_KEY variable set on the server.";
+"settings.tip.server_ip"         = "Use the Raspberry Pi's local IP (e.g. 192.168.1.100) and port 8000.";
+"settings.tip.systemd"           = "If the server doesn't respond, check that the systemd service is running with 'systemctl status backup-server'.";
+"settings.about.app_section"     = "NestVault for macOS";
+"settings.about.repo_section"    = "Repository";
+"settings.about.features_section" = "Features";
+"settings.about.swagger"         = "Swagger UI (when connected)";
+"settings.about.web_dashboard"   = "Web Dashboard";
+"settings.about.open_browser"    = "Open in browser";
+"settings.about.dedup"           = "Deduplication";
+"settings.about.dedup_value"     = "SHA-256 per content";
+"settings.about.versioning"      = "Versioning";
+"settings.about.isolation"       = "Isolation";
+"settings.about.isolation_value" = "Per label/client";
+"settings.about.cleanup"         = "Cleanup";
+"settings.about.cleanup_value"   = "Keep N most recent versions";
+"cleanup.label_versions"         = "%@  (%d versions)";
+"profile.default_name"           = "New Backup";
+
+/* Accumulative inherit (absorb replaces per-file registers) */
+"runner.inherit_planned"        = "Accumulative mode: %d unchanged file(s) will be inherited via absorb (no re-register)";
+"runner.inherit_shortfall"      = "Absorb inherited fewer than required (%d withheld, %d inherited) — version marked as failed";
+"runner.absorb_required_failed" = "Absorb failed with %d file(s) awaiting inheritance — version marked as failed: %@";
+
+/* Batch register (server v7.8+) */
+"runner.batch_register_mode"  = "Batch register enabled (server v7.8+)";
+"runner.register_batch_error" = "Batch register failed (falling back to individual registers): %@";

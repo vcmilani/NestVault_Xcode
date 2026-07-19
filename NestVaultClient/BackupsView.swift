@@ -34,7 +34,7 @@ struct BackupsView: View {
             Button("common.cancel", role: .cancel) {}
             Button("backups.delete_btn", role: .destructive) {
                 Task {
-                    try? await api.deleteVersion(label: selectedBackup!.label, versionKey: ver.versionKey)
+                    _ = try? await api.deleteVersion(label: selectedBackup!.label, versionKey: ver.versionKey)
                     if let backup = selectedBackup { await loadVersions(for: backup) }
                 }
             }

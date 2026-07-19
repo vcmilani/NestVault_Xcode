@@ -3,8 +3,8 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject var api:      APIService
     @EnvironmentObject var schedule: ScheduleManager
+    @EnvironmentObject var power: PowerMonitor
     @StateObject private var loginItem = LoginItemManager()
-    @StateObject private var power     = PowerMonitor()
     @State private var isTesting = false
     @State private var testMsg: String?
     @State private var testOK   = false
@@ -87,8 +87,8 @@ struct SettingsView: View {
 
     var powerSourceLabel: String {
         switch power.powerSource {
-        case .ac:      return "AC \(power.batteryPercent)%"
-        case .battery: return "Bateria \(power.batteryPercent)%"
+        case .ac:      return L("settings.power.ac", power.batteryPercent)
+        case .battery: return L("settings.power.battery", power.batteryPercent)
         case .unknown: return "—"
         }
     }
@@ -108,11 +108,11 @@ struct SettingsView: View {
                 LabeledContent(L("settings.api_key")) {
                     HStack {
                         if showKey {
-                            TextField("Vazio = sem autenticação", text: $api.apiKey)
+                            TextField("settings.api_key_placeholder", text: $api.apiKey)
                                 .textFieldStyle(.roundedBorder)
                                 .frame(width: 240)
                         } else {
-                            SecureField("Vazio = sem autenticação", text: $api.apiKey)
+                            SecureField("settings.api_key_placeholder", text: $api.apiKey)
                                 .textFieldStyle(.roundedBorder)
                                 .frame(width: 240)
                         }
@@ -152,10 +152,10 @@ struct SettingsView: View {
                             if api.isConnected {
                                 await api.fetchBackups()
                                 testOK = true
-                                testMsg = "Conectado! \(api.backups.count) backup(s) encontrado(s)."
+                                testMsg = L("settings.test_ok", api.backups.count)
                             } else {
                                 testOK = false
-                                testMsg = api.connectionError ?? "Falha na conexão."
+                                testMsg = api.connectionError ?? L("settings.test_fail")
                             }
                             isTesting = false
                         }
@@ -177,9 +177,9 @@ struct SettingsView: View {
 
             Section(L("settings.tips_title")) {
                 VStack(alignment: .leading, spacing: 8) {
-                    SettingsTip(icon: "key.fill",      color: .orange,  text: "A API Key deve ser a mesma definida na variável BACKUP_API_KEY do servidor.")
-                    SettingsTip(icon: "network",        color: .blue,    text: "Use o IP local da Raspberry Pi (ex: 192.168.1.100) e porta 8000.")
-                    SettingsTip(icon: "wifi.slash",     color: .red,     text: "Se o servidor não responder, verifique se o serviço systemd está rodando com 'systemctl status backup-server'.")
+                    SettingsTip(icon: "key.fill",   color: .orange, text: L("settings.tip.api_key"))
+                    SettingsTip(icon: "network",    color: .blue,   text: L("settings.tip.server_ip"))
+                    SettingsTip(icon: "wifi.slash", color: .red,    text: L("settings.tip.systemd"))
                 }
             }
         }
@@ -273,7 +273,7 @@ struct SettingsView: View {
     // MARK: - About Tab
     var aboutTab: some View {
         Form {
-            Section("NestVault para macOS") {
+            Section("settings.about.app_section") {
                 LabeledContent("settings.about.version", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—")
                 if !api.serverVersion.isEmpty {
                     LabeledContent(L("settings.about.server_version"), value: api.serverVersion)
@@ -281,25 +281,25 @@ struct SettingsView: View {
                 LabeledContent(L("settings.about.min_macos"), value: "14.0 (Sonoma)")
                 LabeledContent(L("settings.about.server_stack"), value: "FastAPI + SQLite + SHA-256")
             }
-            Section("Repositório") {
+            Section("settings.about.repo_section") {
                 LabeledContent("GitHub") {
                     Link("vcmilani/backup_files",
                          destination: URL(string: "https://github.com/vcmilani/backup_files")!)
                 }
                 LabeledContent("API Docs") {
-                    Link("Swagger UI (quando conectado)",
+                    Link("settings.about.swagger",
                          destination: URL(string: "\(api.serverURL)/docs")!)
                 }
-                LabeledContent("Dashboard Web") {
-                    Link("Abrir no browser",
+                LabeledContent("settings.about.web_dashboard") {
+                    Link("settings.about.open_browser",
                          destination: URL(string: api.serverURL)!)
                 }
             }
-            Section("Funcionalidades") {
-                LabeledContent("Deduplicação", value: "SHA-256 por conteúdo")
-                LabeledContent("Versionamento", value: "Timestamp ISO 8601")
-                LabeledContent("Isolamento", value: "Por label/cliente")
-                LabeledContent("Limpeza", value: "Keep N versões mais recentes")
+            Section("settings.about.features_section") {
+                LabeledContent("settings.about.dedup")      { Text(L("settings.about.dedup_value")) }
+                LabeledContent("settings.about.versioning") { Text("Timestamp ISO 8601") }
+                LabeledContent("settings.about.isolation")  { Text(L("settings.about.isolation_value")) }
+                LabeledContent("settings.about.cleanup")    { Text(L("settings.about.cleanup_value")) }
             }
         }
         .formStyle(.grouped)

@@ -91,6 +91,9 @@ final class BackupQueue: ObservableObject {
 
     var doneCount:    Int { items.filter { $0.status == .done }.count }
     var failedCount:  Int { items.filter { $0.status == .failed }.count }
+    var currentProfile: BackupProfile? {
+        items.indices.contains(currentIndex) ? items[currentIndex].profile : nil
+    }
     var progress: Double {
         guard !items.isEmpty else { return 0 }
         let base = Double(currentIndex < 0 ? 0 : currentIndex)

@@ -12,7 +12,6 @@
 		10B9B198C5AC4B6EAF3AA9B0 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA017D84FF9A45E5AE92FB79 /* ContentView.swift */; };
 		11E1F2A3B4C5D6E7F8A90112 /* LoginItemManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10D0E1F2A3B4C5D6E7F8A901 /* LoginItemManager.swift */; };
 		13A3B4C5D6E7F8A901122334 /* PowerMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12F2A3B4C5D6E7F8A9011223 /* PowerMonitor.swift */; };
-		15C5D6E7F8A901122334455A /* BackoffPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14B4C5D6E7F8A90112233445 /* BackoffPolicy.swift */; };
 		16676CCE39984695BBB6CECC /* BackupsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0D0F75D84484A9EB125C314 /* BackupsView.swift */; };
 		17E7F8A901122334455A6B7C /* ScheduleManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16D6E7F8A901122334455A6B /* ScheduleManager.swift */; };
 		19A901122334455A6B7C8D9E /* ScheduleEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18F8A901122334455A6B7C8D /* ScheduleEditor.swift */; };
@@ -40,7 +39,6 @@
 		07B8C9D0E1F2A3B4C5D6E7F8 /* pt-BR */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "pt-BR"; path = "pt-BR.lproj/Localizable.strings"; sourceTree = "<group>"; };
 		10D0E1F2A3B4C5D6E7F8A901 /* LoginItemManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginItemManager.swift; sourceTree = "<group>"; };
 		12F2A3B4C5D6E7F8A9011223 /* PowerMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerMonitor.swift; sourceTree = "<group>"; };
-		14B4C5D6E7F8A90112233445 /* BackoffPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackoffPolicy.swift; sourceTree = "<group>"; };
 		16D6E7F8A901122334455A6B /* ScheduleManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleManager.swift; sourceTree = "<group>"; };
 		18F8A901122334455A6B7C8D /* ScheduleEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleEditor.swift; sourceTree = "<group>"; };
 		20854D70CB4944CC881331AB /* ConfigStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigStore.swift; sourceTree = "<group>"; };
@@ -119,7 +117,6 @@
 				F6A7B8C9D0E1F2A3B4C5D6E7 /* Localizable.strings */,
 				10D0E1F2A3B4C5D6E7F8A901 /* LoginItemManager.swift */,
 				12F2A3B4C5D6E7F8A9011223 /* PowerMonitor.swift */,
-				14B4C5D6E7F8A90112233445 /* BackoffPolicy.swift */,
 				16D6E7F8A901122334455A6B /* ScheduleManager.swift */,
 				18F8A901122334455A6B7C8D /* ScheduleEditor.swift */,
 				20A9011223345566778899AB /* DockProgress.swift */,
@@ -220,7 +217,6 @@
 				656BBA46EE334A2CB007B443 /* BackupQueueView.swift in Sources */,
 				11E1F2A3B4C5D6E7F8A90112 /* LoginItemManager.swift in Sources */,
 				13A3B4C5D6E7F8A901122334 /* PowerMonitor.swift in Sources */,
-				15C5D6E7F8A901122334455A /* BackoffPolicy.swift in Sources */,
 				17E7F8A901122334455A6B7C /* ScheduleManager.swift in Sources */,
 				19A901122334455A6B7C8D9E /* ScheduleEditor.swift in Sources */,
 				21AB011223345566778899CD /* DockProgress.swift in Sources */,

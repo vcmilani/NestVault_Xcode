@@ -47,7 +47,7 @@ struct BackupQueueSheet: View {
             if phase == .selecting {
                 selectionView
             } else if let queue {
-                runningView(queue: queue)
+                QueueRunningView(queue: queue) { phase = .finished }
             }
 
             Divider()
@@ -68,7 +68,7 @@ struct BackupQueueSheet: View {
                         startQueue()
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(selection.isEmpty)
+                    .disabled(selection.isEmpty || schedule.activeManualRunner?.status == .running)
                 }
 
                 if phase == .running, let queue {
@@ -151,60 +151,6 @@ struct BackupQueueSheet: View {
         }
     }
 
-    // MARK: - Running / Finished View
-    @ViewBuilder
-    private func runningView(queue: BackupQueue) -> some View {
-        VStack(spacing: 0) {
-            if queue.status == .running {
-                VStack(alignment: .leading, spacing: 6) {
-                    ProgressView(value: queue.progress)
-                        .progressViewStyle(.linear)
-                    HStack {
-                        if let runner = queue.currentRunner, !runner.currentFile.isEmpty {
-                            Text(runner.currentFile)
-                                .font(.caption.monospaced())
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-                        Spacer()
-                        Text("\(Int(queue.progress * 100))%")
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .padding(.horizontal, 18).padding(.vertical, 10)
-                Divider()
-            }
-
-            ScrollView {
-                VStack(spacing: 0) {
-                    ForEach(queue.items) { item in
-                        QueueItemRow(item: item, runner: queue.currentRunner,
-                                     isCurrent: queue.items.firstIndex(where: { $0.id == item.id }) == queue.currentIndex)
-                        Divider()
-                    }
-                }
-            }
-
-            if queue.status == .done || queue.status == .cancelled {
-                Divider()
-                HStack(spacing: 0) {
-                    ResultStat(value: "\(queue.doneCount)",   label: "queue.stat.done")
-                    Divider()
-                    ResultStat(value: "\(queue.failedCount)", label: "queue.stat.failed")
-                    Divider()
-                    ResultStat(value: "\(queue.items.count - queue.doneCount - queue.failedCount)", label: "queue.stat.other")
-                }
-                .frame(height: 54)
-            }
-        }
-        .onChange(of: queue.status) { newStatus in
-            if newStatus == .done || newStatus == .cancelled {
-                phase = .finished
-            }
-        }
-    }
-
     // MARK: - Computed
     var headerSubtitle: String {
         switch phase {
@@ -253,6 +199,81 @@ struct BackupQueueSheet: View {
     }
 }
 
+// MARK: - Running / Finished View
+// Child views with @ObservedObject: the sheet itself doesn't observe the queue or
+// the runner, so reading their values inline froze the bars at their first render.
+
+private struct QueueRunningView: View {
+    @ObservedObject var queue: BackupQueue
+    let onFinished: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if queue.status == .running, let runner = queue.currentRunner {
+                QueueTopProgress(queue: queue, runner: runner)
+                Divider()
+            }
+
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(Array(queue.items.enumerated()), id: \.element.id) { idx, item in
+                        QueueItemRow(item: item, runner: queue.currentRunner,
+                                     isCurrent: idx == queue.currentIndex)
+                        Divider()
+                    }
+                }
+            }
+
+            if queue.status == .done || queue.status == .cancelled {
+                Divider()
+                HStack(spacing: 0) {
+                    ResultStat(value: "\(queue.doneCount)",   label: "queue.stat.done")
+                    Divider()
+                    ResultStat(value: "\(queue.failedCount)", label: "queue.stat.failed")
+                    Divider()
+                    ResultStat(value: "\(queue.items.count - queue.doneCount - queue.failedCount)", label: "queue.stat.other")
+                }
+                .frame(height: 54)
+            }
+        }
+        .onChange(of: queue.status) { _, newStatus in
+            if newStatus == .done || newStatus == .cancelled {
+                onFinished()
+            }
+        }
+    }
+}
+
+/// Aggregate bar at the top — observes the current runner so the per-file
+/// progress feeding queue.progress refreshes live.
+private struct QueueTopProgress: View {
+    @ObservedObject var queue:  BackupQueue
+    @ObservedObject var runner: BackupRunner
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ProgressView(value: queue.progress)
+                .progressViewStyle(.linear)
+            HStack {
+                let detail = runner.currentFile.isEmpty
+                    ? runner.phaseDescription : runner.currentFile
+                if !detail.isEmpty {
+                    Text(detail)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer()
+                Text("\(Int(queue.progress * 100))%")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 18).padding(.vertical, 10)
+    }
+}
+
 // MARK: - Queue Item Row
 
 struct QueueItemRow: View {
@@ -274,18 +295,7 @@ struct QueueItemRow: View {
             }
             Spacer()
             if isCurrent, let runner {
-                VStack(alignment: .trailing, spacing: 2) {
-                    ProgressView(value: runner.progress)
-                        .progressViewStyle(.linear)
-                        .frame(width: 120)
-                    if !runner.currentFile.isEmpty {
-                        Text(runner.currentFile)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .frame(width: 120, alignment: .trailing)
-                    }
-                }
+                QueueItemProgress(runner: runner)
             } else {
                 Text(LocalizedStringKey(statusLabel))
                     .font(.caption.weight(.medium))
@@ -316,6 +326,29 @@ struct QueueItemRow: View {
         case .failed:    return "queue.failed"
         case .cancelled: return "queue.cancelled"
         case .skipped:   return "queue.skipped"
+        }
+    }
+}
+
+/// Per-item mini progress — must observe the runner or it freezes at first render.
+private struct QueueItemProgress: View {
+    @ObservedObject var runner: BackupRunner
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 2) {
+            ProgressView(value: runner.progress)
+                .progressViewStyle(.linear)
+                .frame(width: 120)
+            let detail = runner.currentFile.isEmpty
+                ? runner.phaseDescription : runner.currentFile
+            if !detail.isEmpty {
+                Text(detail)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(width: 120, alignment: .trailing)
+            }
         }
     }
 }
