@@ -400,3 +400,40 @@
 /* Batch register (server v7.8+) */
 "runner.batch_register_mode"  = "Registro em lote ativado (servidor v7.8+)";
 "runner.register_batch_error" = "Erro no registro em lote (caindo para registro individual): %@";
+
+/* Restore */
+"backups.restore_version"       = "Restaurar versão…";
+"backups.restore_selected"      = "Restaurar %d selecionado(s)";
+"backups.restore_filtered"      = "Restaurar %d exibido(s)";
+"restore.header.info"           = "Versão %@ — %d arquivo(s) · %@";
+"restore.start"                 = "Iniciar restauração";
+"restore.version_warning"       = "Esta versão não está completa (status ≠ done) — alguns arquivos podem faltar.";
+"restore.dest.label"            = "Destino";
+"restore.dest.original"         = "Local original";
+"restore.dest.choose"           = "Escolher pasta";
+"restore.dest.choose_btn"       = "Escolher…";
+"restore.dest.none"             = "Nenhuma pasta selecionada";
+"restore.no_profile_hint"       = "Nenhum perfil com este label — escolha uma pasta de destino.";
+"restore.policy.label"          = "Arquivos existentes";
+"restore.policy.keep"           = "Manter existentes (nunca sobrescrever)";
+"restore.policy.overwrite_changed" = "Sobrescrever apenas alterados";
+"restore.policy.overwrite_all"  = "Sobrescrever tudo";
+"restore.running"               = "Restaurando";
+"restore.running_label"         = "Baixando arquivos…";
+"restore.stat.restored"         = "Restaurados";
+"restore.stat.skipped"          = "Pulados";
+"restore.stat.errors"           = "Erros";
+"restore.starting"              = "Iniciando restauração: %@ — versão %@";
+"restore.dest"                  = "Destino: %@";
+"restore.files_count"           = "%d arquivo(s) a restaurar (%@)";
+"restore.plan_skipped_system"   = "%d arquivo(s) de sistema ignorado(s)";
+"restore.unsafe_path"           = "Path inseguro ignorado (fora do destino): %@";
+"restore.duplicate_paths"       = "%d path(s) duplicado(s) na seleção — último prevalece";
+"restore.skipped_identical"     = "Idêntico, pulado: %@";
+"restore.kept_modified"         = "Modificado localmente — mantido: %@";
+"restore.integrity_failed"      = "Verificação SHA-256 falhou: %@";
+"restore.file_error"            = "Erro: %@ — %@";
+"restore.cancel_requested"      = "Cancelamento solicitado…";
+"restore.cancelled"             = "Restauração cancelada — arquivos já restaurados foram mantidos.";
+"restore.partial_warning"       = "Restauração parcial: %d arquivo(s) com erro.";
+"restore.summary"               = "Restaurados: %d  Pulados: %d  Erros: %d";

@@ -12,6 +12,7 @@ struct BackupsView: View {
     @State private var backupSearch     = ""
     @State private var showDeleteVersion = false
     @State private var pendingDelete:   BackupVersion?
+    @State private var restoreContext:  RestoreContext?
 
     var filteredBackups: [BackupSummary] {
         guard !backupSearch.isEmpty else { return api.backups }
@@ -41,6 +42,30 @@ struct BackupsView: View {
         } message: { ver in
             Text(L("backups.delete_msg", ver.versionKey))
         }
+        .sheet(item: $restoreContext) { context in
+            RestoreSheet(context: context, api: api)
+        }
+    }
+
+    // MARK: - Restore entry points
+
+    /// Restore the whole version from the versions-pane context menu — reuses the
+    /// already-loaded file list when it belongs to this version, fetches otherwise.
+    func startVersionRestore(backup: BackupSummary, version: BackupVersion) async {
+        let versionFiles: [VersionFile]
+        if selectedVersion == version, !files.isEmpty {
+            versionFiles = files
+        } else {
+            guard let fetched = try? await api.fetchFiles(label: backup.label,
+                                                          versionKey: version.versionKey),
+                  !fetched.isEmpty else { return }
+            versionFiles = fetched
+        }
+        restoreContext = RestoreContext(
+            label:                backup.label,
+            versionKey:           version.versionKey,
+            files:                versionFiles,
+            versionStatusWarning: !version.isDone)
     }
 
     // MARK: - Backups Pane
@@ -131,6 +156,12 @@ struct BackupsView: View {
                                     Task { await loadFiles(backup: backup, version: version) }
                                 }
                                 .contextMenu {
+                                    Button {
+                                        Task { await startVersionRestore(backup: backup, version: version) }
+                                    } label: {
+                                        Label("backups.restore_version", systemImage: "arrow.down.circle")
+                                    }
+                                    .disabled(version.status == "running" || version.status == "failed")
                                     Button(role: .destructive) {
                                         pendingDelete = version
                                         showDeleteVersion = true
@@ -155,7 +186,13 @@ struct BackupsView: View {
     var filesPane: some View {
         Group {
             if let version = selectedVersion {
-                FilesDetailView(version: version, files: files, isLoading: loadingFiles)
+                FilesDetailView(version: version, files: files, isLoading: loadingFiles) { picked in
+                    restoreContext = RestoreContext(
+                        label:                version.backupLabel,
+                        versionKey:           version.versionKey,
+                        files:                picked,
+                        versionStatusWarning: !version.isDone)
+                }
             } else if selectedBackup != nil {
                 PlaceholderView(title: "backups.select_version", icon: "clock.arrow.circlepath")
             } else {
@@ -225,14 +262,22 @@ struct FilesDetailView: View {
     let version:   BackupVersion
     let files:     [VersionFile]
     let isLoading: Bool
+    var onRestore: ([VersionFile]) -> Void = { _ in }
 
     @State private var fileSearch  = ""
     @State private var sortOrder   = [KeyPathComparator(\VersionFile.originalPath)]
+    @State private var selection   = Set<Int>()
 
     var filtered: [VersionFile] {
         var r = files
         if !fileSearch.isEmpty { r = r.filter { $0.originalPath.localizedCaseInsensitiveContains(fileSearch) } }
         return r
+    }
+
+    private func restoreSelection() {
+        let picked = files.filter { selection.contains($0.id) }
+        guard !picked.isEmpty else { return }
+        onRestore(picked)
     }
 
     var body: some View {
@@ -252,6 +297,21 @@ struct FilesDetailView: View {
                     .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
+                if !selection.isEmpty {
+                    Button {
+                        restoreSelection()
+                    } label: {
+                        Label(L("backups.restore_selected", selection.count),
+                              systemImage: "arrow.down.circle")
+                    }
+                } else if !fileSearch.isEmpty && !filtered.isEmpty {
+                    Button {
+                        onRestore(filtered)
+                    } label: {
+                        Label(L("backups.restore_filtered", filtered.count),
+                              systemImage: "arrow.down.circle")
+                    }
+                }
             }
             .padding(.horizontal, 16).padding(.vertical, 10)
             Divider()
@@ -260,7 +320,7 @@ struct FilesDetailView: View {
             } else if filtered.isEmpty {
                 PlaceholderView(title: "backups.no_files", icon: "doc.on.doc")
             } else {
-                Table(filtered, sortOrder: $sortOrder) {
+                Table(filtered, selection: $selection, sortOrder: $sortOrder) {
                     TableColumn("backups.col.file", value: \.originalPath) { file in
                         HStack(spacing: 6) {
                             Image(systemName: "doc")
@@ -280,7 +340,18 @@ struct FilesDetailView: View {
                     }.width(100)
                 }
                 .searchable(text: $fileSearch, prompt: "backups.filter_files")
+                .contextMenu(forSelectionType: Int.self) { ids in
+                    Button {
+                        let picked = files.filter { ids.contains($0.id) }
+                        guard !picked.isEmpty else { return }
+                        onRestore(picked)
+                    } label: {
+                        Label(L("backups.restore_selected", ids.count),
+                              systemImage: "arrow.down.circle")
+                    }
+                }
             }
         }
+        .onChange(of: version) { _, _ in selection = [] }
     }
 }

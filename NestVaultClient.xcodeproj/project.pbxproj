@@ -32,6 +32,9 @@
 		E8DFBFA9454A4F2DA0970385 /* APIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8964D302B3A04664BEC65D63 /* APIService.swift */; };
 		EA1787FC65BF472BA449C3ED /* BackupRunnerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33E1D184F0A14E85ABE077C3 /* BackupRunnerView.swift */; };
 		F499A63DA956450A83919B62 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B0C651BAEDD046F3AB7CBC12 /* Assets.xcassets */; };
+		4E1A2B3C4D5E6F7089A0B1C2 /* HashUtil.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D0A1B2C3D4E5F60718293A4 /* HashUtil.swift */; };
+		5F2B3C4D5E6F7089A0B1C2D3 /* RestoreRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E1B2C3D4E5F60718293A4B5 /* RestoreRunner.swift */; };
+		6A3C4D5E6F7089A0B1C2D3E4 /* RestoreView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F2C3D4E5F60718293A4B5C6 /* RestoreView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -63,6 +66,9 @@
 		F28F537DE5F447A6A66D7516 /* NestVault.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NestVault.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		F7D5F584D60E4B1A8B0FF983 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		FE65E70C406D4D9E9CE23554 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		3D0A1B2C3D4E5F60718293A4 /* HashUtil.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HashUtil.swift; sourceTree = "<group>"; };
+		4E1B2C3D4E5F60718293A4B5 /* RestoreRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RestoreRunner.swift; sourceTree = "<group>"; };
+		5F2C3D4E5F60718293A4B5C6 /* RestoreView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RestoreView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -111,6 +117,9 @@
 				B0C651BAEDD046F3AB7CBC12 /* Assets.xcassets */,
 				4D7884B947C8499BA88A4BBF /* BackupRunner.swift */,
 				33E1D184F0A14E85ABE077C3 /* BackupRunnerView.swift */,
+				3D0A1B2C3D4E5F60718293A4 /* HashUtil.swift */,
+				4E1B2C3D4E5F60718293A4B5 /* RestoreRunner.swift */,
+				5F2C3D4E5F60718293A4B5C6 /* RestoreView.swift */,
 				5B8320D884F04EC184C34410 /* BackupQueue.swift */,
 				7745F6A9B4C847B7A326F84C /* BackupQueueView.swift */,
 				A1B2C3D4E5F6A7B8C9D0E1F2 /* L10n.swift */,
@@ -213,6 +222,9 @@
 				B2C3D4E5F6A7B8C9D0E1F2A3 /* L10n.swift in Sources */,
 				2D075A220F444FA9B1FA04D0 /* BackupRunner.swift in Sources */,
 				EA1787FC65BF472BA449C3ED /* BackupRunnerView.swift in Sources */,
+				4E1A2B3C4D5E6F7089A0B1C2 /* HashUtil.swift in Sources */,
+				5F2B3C4D5E6F7089A0B1C2D3 /* RestoreRunner.swift in Sources */,
+				6A3C4D5E6F7089A0B1C2D3E4 /* RestoreView.swift in Sources */,
 				C3AB8486F0C04388A6730754 /* BackupQueue.swift in Sources */,
 				656BBA46EE334A2CB007B443 /* BackupQueueView.swift in Sources */,
 				11E1F2A3B4C5D6E7F8A90112 /* LoginItemManager.swift in Sources */,

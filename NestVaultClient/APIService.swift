@@ -238,6 +238,14 @@ final class APIService: ObservableObject {
         return try await Self.decodeDetached([VersionFile].self, from: data)
     }
 
+    /// Request for GET /files/{id}/download — executed by RestoreRunner on its own
+    /// session (same pattern as BackupRunner's use of buildRequest).
+    func downloadRequest(fileId: Int) throws -> URLRequest {
+        var req = try buildRequest("/files/\(fileId)/download", method: "GET", body: nil)
+        req.timeoutInterval = 3600
+        return req
+    }
+
     // MARK: - Cleanup
 
     func cleanup(label: String, keep: Int) async throws -> CleanupResult {
