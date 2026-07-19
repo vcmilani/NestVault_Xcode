@@ -144,20 +144,6 @@ struct CheckBatchResultItem: Decodable {
     }
 }
 
-// MARK: - UploadResponse  (POST /upload)
-
-struct UploadResponse: Codable {
-    let status: String
-    let fileId: Int?
-    let sha256: String?
-    let uploaded: Bool?
-
-    enum CodingKeys: String, CodingKey {
-        case status, sha256, uploaded
-        case fileId = "file_id"
-    }
-}
-
 // MARK: - SyncResponse  (POST /sync)
 
 struct SyncResponse: Codable {
@@ -283,7 +269,7 @@ struct BackupProfile: Codable, Identifiable, Hashable {
     var smartSkip: Bool = false
     var lastFullBackupDate: Date?
 
-    init(name: String = "Novo Backup", label: String = "", sourcePath: String = "",
+    init(name: String = L("profile.default_name"), label: String = "", sourcePath: String = "",
          excludes: [String] = [], workers: Int = 4, prefix: String = "",
          serverOverride: String = "", enabled: Bool = true,
          schedule: BackupSchedule = BackupSchedule(),

@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 // MARK: - APIService-only response types
 
@@ -6,11 +7,6 @@ struct HealthResponse: Decodable {
     let status: String
     let version: String
     let time: String
-}
-
-struct BackupDeletedResponse: Decodable {
-    let status: String
-    let label: String
 }
 
 struct VersionDeletedResponse: Decodable {
@@ -44,7 +40,7 @@ struct BackoffState {
 @MainActor
 final class APIService: ObservableObject {
     @Published var serverURL: String = UserDefaults.standard.string(forKey: "server_url") ?? "http://192.168.1.100:8000"
-    @Published var apiKey:    String = UserDefaults.standard.string(forKey: "api_key")    ?? ""
+    @Published var apiKey:    String
     @Published var isConnected: Bool = false
     @Published var connectionError: String? = nil
     @Published var isLoadingBackups: Bool = false
@@ -61,9 +57,22 @@ final class APIService: ObservableObject {
         )
     }
 
+    init() {
+        if let stored = KeychainStore.string(for: "api_key") {
+            apiKey = stored
+        } else if let legacy = UserDefaults.standard.string(forKey: "api_key"), !legacy.isEmpty {
+            // One-time migration: pre-Keychain builds kept the key in UserDefaults (plaintext).
+            apiKey = legacy
+            KeychainStore.set(legacy, for: "api_key")
+            UserDefaults.standard.removeObject(forKey: "api_key")
+        } else {
+            apiKey = ""
+        }
+    }
+
     func saveSettings() {
         UserDefaults.standard.set(serverURL, forKey: "server_url")
-        UserDefaults.standard.set(apiKey,    forKey: "api_key")
+        KeychainStore.set(apiKey, for: "api_key")
     }
 
     // MARK: - Batch Support
@@ -141,6 +150,18 @@ final class APIService: ObservableObject {
         }
     }
 
+    // MARK: - Off-main decoding
+
+    /// Decodes on a background task. APIService is MainActor-isolated, so decoding
+    /// large payloads (a version's full file list) inline would hitch the UI.
+    nonisolated private static func decodeDetached<T: Decodable & Sendable>(
+        _ type: T.Type, from data: Data
+    ) async throws -> T {
+        try await Task.detached(priority: .userInitiated) {
+            try JSONDecoder().decode(T.self, from: data)
+        }.value
+    }
+
     // MARK: - Versions
 
     func fetchVersions(label: String) async throws -> [BackupVersion] {
@@ -150,7 +171,7 @@ final class APIService: ObservableObject {
         if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             throw apiError(http.statusCode, String(data: data, encoding: .utf8) ?? "")
         }
-        return try JSONDecoder().decode([BackupVersion].self, from: data)
+        return try await Self.decodeDetached([BackupVersion].self, from: data)
     }
 
     func fetchVersionDetail(label: String, versionKey: String) async throws -> BackupVersion {
@@ -188,7 +209,7 @@ final class APIService: ObservableObject {
         if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             throw apiError(http.statusCode, String(data: data, encoding: .utf8) ?? "")
         }
-        return try JSONDecoder().decode([VersionFile].self, from: data)
+        return try await Self.decodeDetached([VersionFile].self, from: data)
     }
 
     // MARK: - Cleanup
@@ -208,13 +229,25 @@ final class APIService: ObservableObject {
         return r
     }
 
-    func cleanupAll(keep: Int) async throws -> [CleanupResult] {
+    struct CleanupAllOutcome {
+        let results: [CleanupResult]
+        let errors:  [(label: String, message: String)]
+    }
+
+    /// Runs cleanup for every backup label. Sequential on purpose — the server-side
+    /// cleanup is a heavy SQLite + storage-deletion operation — but one failing label
+    /// no longer aborts the rest: failures are collected per label.
+    func cleanupAll(keep: Int) async -> CleanupAllOutcome {
         var results: [CleanupResult] = []
+        var errors:  [(label: String, message: String)] = []
         for backup in backups {
-            let r = try await cleanup(label: backup.label, keep: keep)
-            results.append(r)
+            do {
+                results.append(try await cleanup(label: backup.label, keep: keep))
+            } catch {
+                errors.append((backup.label, error.localizedDescription))
+            }
         }
-        return results
+        return CleanupAllOutcome(results: results, errors: errors)
     }
 
     // MARK: - Absorb
@@ -258,6 +291,48 @@ final class APIService: ObservableObject {
     private func apiError(_ code: Int, _ message: String) -> NSError {
         NSError(domain: "NestVault", code: code,
                 userInfo: [NSLocalizedDescriptionKey: "HTTP \(code) — \(message.prefix(200))"])
+    }
+}
+
+// MARK: - Keychain
+
+/// Minimal generic-password Keychain wrapper for the API key.
+enum KeychainStore {
+    private static let service = "com.vcm.nestvault"
+
+    static func string(for account: String) -> String? {
+        let query: [String: Any] = [
+            kSecClass       as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData  as String: true,
+            kSecMatchLimit  as String: kSecMatchLimitOne
+        ]
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+              let data = item as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    /// Stores the value; an empty string deletes the item.
+    static func set(_ value: String, for account: String) {
+        let base: [String: Any] = [
+            kSecClass       as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
+        guard !value.isEmpty else {
+            SecItemDelete(base as CFDictionary)
+            return
+        }
+        let data   = Data(value.utf8)
+        let status = SecItemUpdate(base as CFDictionary,
+                                   [kSecValueData as String: data] as CFDictionary)
+        if status == errSecItemNotFound {
+            var add = base
+            add[kSecValueData as String] = data
+            SecItemAdd(add as CFDictionary, nil)
+        }
     }
 }
 

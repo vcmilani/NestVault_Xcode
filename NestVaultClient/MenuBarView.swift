@@ -59,23 +59,20 @@ struct MenuBarView: View {
             Divider()
 
             // ── Active Manual Progress ───────────────────────────────
-            if let runner = schedule.activeManualRunner, runner.status == .running {
+            if let runner = schedule.activeManualRunner {
                 let profile = store.profiles.first { $0.id == schedule.activeManualProfileId }
-                runnerCard(runner: runner, name: profile?.name, badge: "menubar.manual_badge")
-                Divider()
+                MenuRunnerCard(runner: runner, name: profile?.name, badge: "menubar.manual_badge")
             }
 
             // ── Active Queue Progress ────────────────────────────────
-            if let queue = schedule.activeQueue, queue.status == .running {
-                queueCard(queue: queue)
-                Divider()
+            if let queue = schedule.activeQueue {
+                MenuQueueCard(queue: queue)
             }
 
             // ── Active Schedule Progress ─────────────────────────────
-            if let runner = schedule.activeRunner, runner.status == .running {
+            if let runner = schedule.activeRunner {
                 let profile = store.profiles.first { $0.id == schedule.currentProfileId }
-                runnerCard(runner: runner, name: profile?.name, badge: nil)
-                Divider()
+                MenuRunnerCard(runner: runner, name: profile?.name, badge: nil)
             }
 
             // ── Stats Mini Row ───────────────────────────────────────
@@ -192,47 +189,83 @@ struct MenuBarView: View {
         }
     }
 
-    // MARK: - Progress Cards
+}
 
-    @ViewBuilder
-    private func runnerCard(runner: BackupRunner, name: String?, badge: String?) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Image(systemName: "arrow.up.circle.fill")
-                    .foregroundStyle(.blue)
-                    .symbolEffect(.pulse)
-                Text(name ?? "NestVault")
-                    .font(.caption.weight(.semibold))
-                    .lineLimit(1)
-                if let badge {
-                    Text(LocalizedStringKey(badge))
-                        .font(.caption2)
+// MARK: - Progress Cards
+// Child views with @ObservedObject: MenuBarView itself doesn't observe the
+// runner/queue, so inline cards froze at whatever state the menu opened with.
+// Each card also owns its running-status gate and trailing Divider.
+
+private struct MenuRunnerCard: View {
+    @ObservedObject var runner: BackupRunner
+    let name:  String?
+    let badge: String?
+
+    var body: some View {
+        if runner.status == .running {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.up.circle.fill")
                         .foregroundStyle(.blue)
-                        .padding(.horizontal, 5).padding(.vertical, 2)
-                        .background(Color.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+                        .symbolEffect(.pulse)
+                    Text(name ?? "NestVault")
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                    if let badge {
+                        Text(LocalizedStringKey(badge))
+                            .font(.caption2)
+                            .foregroundStyle(.blue)
+                            .padding(.horizontal, 5).padding(.vertical, 2)
+                            .background(Color.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+                    }
+                    Spacer()
+                    if !runner.isIndeterminatePhase {
+                        Text("\(Int(runner.progress * 100))%")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
                 }
-                Spacer()
-                Text("\(Int(runner.progress * 100))%")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                if runner.isIndeterminatePhase {
+                    ProgressView()
+                        .progressViewStyle(.linear)
+                } else {
+                    ProgressView(value: runner.progress)
+                        .progressViewStyle(.linear)
+                }
+                let detail = runner.currentFile.isEmpty
+                    ? runner.phaseDescription : runner.currentFile
+                if !detail.isEmpty {
+                    Text(detail)
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
             }
-            ProgressView(value: runner.progress)
-                .progressViewStyle(.linear)
-            if !runner.currentFile.isEmpty {
-                Text(runner.currentFile)
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(Color.blue.opacity(0.06))
+            Divider()
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(Color.blue.opacity(0.06))
     }
+}
 
-    @ViewBuilder
-    private func queueCard(queue: BackupQueue) -> some View {
+private struct MenuQueueCard: View {
+    @ObservedObject var queue: BackupQueue
+
+    var body: some View {
+        if queue.status == .running, let runner = queue.currentRunner {
+            MenuQueueCardContent(queue: queue, runner: runner)
+            Divider()
+        }
+    }
+}
+
+private struct MenuQueueCardContent: View {
+    @ObservedObject var queue:  BackupQueue
+    @ObservedObject var runner: BackupRunner
+
+    var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Image(systemName: "list.bullet.rectangle.fill")
@@ -254,8 +287,10 @@ struct MenuBarView: View {
             ProgressView(value: queue.progress)
                 .progressViewStyle(.linear)
                 .tint(.purple)
-            if let file = queue.currentRunner?.currentFile, !file.isEmpty {
-                Text(file)
+            let detail = runner.currentFile.isEmpty
+                ? runner.phaseDescription : runner.currentFile
+            if !detail.isEmpty {
+                Text(detail)
                     .font(.caption2.monospaced())
                     .foregroundStyle(.secondary)
                     .lineLimit(1)

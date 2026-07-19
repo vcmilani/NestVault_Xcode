@@ -199,7 +199,8 @@ struct ProfileDetailView: View {
     let defaultServer: String
     let onEdit: () -> Void
 
-    @EnvironmentObject var api: APIService
+    @EnvironmentObject var api:      APIService
+    @EnvironmentObject var schedule: ScheduleManager
     @State private var showRunner = false
 
     var body: some View {
@@ -318,7 +319,8 @@ struct ProfileDetailView: View {
             .padding(.vertical, 12)
         }
         .sheet(isPresented: $showRunner) {
-            BackupRunnerSheet(profile: profile, api: api)
+            BackupRunnerSheet(profile: profile, api: api,
+                              existingRunner: schedule.runnerIfActive(for: profile.id))
         }
     }
 
@@ -482,7 +484,7 @@ struct ProfileEditorSheet: View {
                                     .multilineTextAlignment(.center)
                                     .frame(width: 60)
                                     .font(.body.monospacedDigit())
-                                    .onChange(of: draft.workers) { v in
+                                    .onChange(of: draft.workers) { _, v in
                                         if v < 1  { draft.workers = 1 }
                                         if v > 16 { draft.workers = 16 }
                                     }
@@ -583,7 +585,7 @@ struct ExcludesEditor: View {
         .onAppear {
             local = excludes
         }
-        .onChange(of: local) { newValue in
+        .onChange(of: local) { _, newValue in
             excludes = newValue
         }
     }

@@ -53,7 +53,7 @@ struct CleanupView: View {
                             Picker("Backup", selection: $selectedLabel) {
                                 Text("cleanup.select_backup").tag("")
                                 ForEach(api.backups) { b in
-                                    Text("\(b.label)  (\(b.versionCount) versões)").tag(b.label)
+                                    Text(L("cleanup.label_versions", b.label, b.versionCount)).tag(b.label)
                                 }
                             }
                             .pickerStyle(.menu)
@@ -116,7 +116,7 @@ struct CleanupView: View {
 
                                 Divider()
 
-                                ForEach(Array(targetBackups.enumerated()), id: \.offset) { idx, backup in
+                                ForEach(Array(targetBackups.enumerated()), id: \.element.id) { idx, backup in
                                     let willRemove = max(0, backup.versionCount - keepCount)
                                     HStack {
                                         HStack(spacing: 6) {
@@ -237,7 +237,7 @@ struct CleanupView: View {
 
                         // Per-label results
                         VStack(spacing: 0) {
-                            ForEach(Array(results.enumerated()), id: \.offset) { idx, r in
+                            ForEach(Array(results.enumerated()), id: \.element.label) { idx, r in
                                 let icon    = r.removed > 0 ? "checkmark.circle.fill" : "minus.circle.fill"
                                 let iconClr = r.removed > 0 ? Color.green : Color.secondary
                                 let detail  = L("cleanup.result_detail", r.kept, r.removed, r.storageFilesRemoved)
@@ -282,19 +282,25 @@ struct CleanupView: View {
         results   = []
 
         Task {
-            do {
-                switch mode {
-                case .all:
-                    results = try await api.cleanupAll(keep: keepCount)
-                case .specific:
+            switch mode {
+            case .all:
+                let outcome = await api.cleanupAll(keep: keepCount)
+                results = outcome.results
+                if !outcome.errors.isEmpty {
+                    runError = outcome.errors
+                        .map { "\($0.label): \($0.message)" }
+                        .joined(separator: "\n")
+                }
+            case .specific:
+                do {
                     let r = try await api.cleanup(label: selectedLabel, keep: keepCount)
                     results = [r]
+                } catch {
+                    runError = error.localizedDescription
                 }
-                hasRun = true
-                await api.fetchBackups()
-            } catch {
-                runError = error.localizedDescription
             }
+            hasRun = !results.isEmpty
+            await api.fetchBackups()
             isRunning = false
         }
     }
