@@ -144,18 +144,46 @@ struct CheckBatchResultItem: Decodable {
     }
 }
 
-// MARK: - UploadResponse  (POST /upload)
+// MARK: - Batch Register  (POST /register/batch — server v7.8+)
 
-struct UploadResponse: Codable {
-    let status: String
-    let fileId: Int?
-    let sha256: String?
-    let uploaded: Bool?
+struct RegisterBatchItem: Encodable {
+    let originalPath: String
+    let sha256: String
+    let mtime: Double
 
     enum CodingKeys: String, CodingKey {
-        case status, sha256, uploaded
-        case fileId = "file_id"
+        case originalPath = "original_path"
+        case sha256, mtime
     }
+}
+
+struct RegisterBatchRequest: Encodable {
+    let backupLabel: String
+    let versionKey: String
+    let files: [RegisterBatchItem]
+
+    enum CodingKeys: String, CodingKey {
+        case backupLabel = "backup_label"
+        case versionKey  = "version_key"
+        case files
+    }
+}
+
+struct RegisterBatchResultItem: Decodable {
+    let originalPath: String
+    let registered: Bool
+    let reason: String
+
+    enum CodingKeys: String, CodingKey {
+        case originalPath = "original_path"
+        case registered, reason
+    }
+}
+
+struct RegisterBatchResponse: Decodable {
+    let registered: Int
+    let missing: Int
+    let results: [RegisterBatchResultItem]
 }
 
 // MARK: - SyncResponse  (POST /sync)
@@ -283,7 +311,7 @@ struct BackupProfile: Codable, Identifiable, Hashable {
     var smartSkip: Bool = false
     var lastFullBackupDate: Date?
 
-    init(name: String = "Novo Backup", label: String = "", sourcePath: String = "",
+    init(name: String = L("profile.default_name"), label: String = "", sourcePath: String = "",
          excludes: [String] = [], workers: Int = 4, prefix: String = "",
          serverOverride: String = "", enabled: Bool = true,
          schedule: BackupSchedule = BackupSchedule(),

@@ -12,8 +12,32 @@ final class BackupRunner: ObservableObject {
     @Published var progress: Double = 0
     @Published var stats = Stats()
     @Published var currentFile = ""
+    @Published var runPhase: RunPhase = .idle
+    @Published var phaseProcessed = 0
+    @Published var phaseTotal = 0
 
     enum RunStatus { case idle, running, done, failed, cancelled }
+    enum RunPhase  { case idle, preparing, scanning, checking, processing, finalizing }
+
+    /// Human-readable label for the current phase, used by the runner sheet, menu bar and queue.
+    var phaseDescription: String {
+        switch runPhase {
+        case .idle:       return ""
+        case .preparing:  return L("runner.phase.preparing")
+        case .scanning:   return L("runner.phase.scanning", phaseProcessed)
+        case .checking:   return L("runner.phase.checking_simple")
+        case .processing: return L("runner.phase.processing", phaseProcessed, phaseTotal)
+        case .finalizing: return L("runner.phase.finalizing")
+        }
+    }
+
+    /// Phases without a meaningful fraction — views should show an indeterminate bar.
+    var isIndeterminatePhase: Bool {
+        switch runPhase {
+        case .preparing, .scanning, .checking, .finalizing: return true
+        default: return false
+        }
+    }
 
     /// True after a full backup completes; false when smart skip was used (absorb-only).
     /// Used by ScheduleManager to decide whether to update lastFullBackupDate.
@@ -27,8 +51,8 @@ final class BackupRunner: ObservableObject {
     }
 
     struct Stats {
-        var total = 0, uploaded = 0, registered = 0, cached = 0, ignored = 0, errors = 0
-        var inherited = 0, skipped = 0
+        var uploaded = 0, registered = 0, cached = 0, ignored = 0, errors = 0
+        var inherited = 0
     }
 
     private enum FileAction {
@@ -36,9 +60,17 @@ final class BackupRunner: ObservableObject {
         case cachedRegister(sha256: String)   // mtime+size cache hit — counted as "cached"
         case register(sha256: String)          // contentExists = true
         case upload                            // contentExists = false
+
+        /// Non-nil for the two register variants — the ones /register/batch can carry.
+        var registerSha: String? {
+            switch self {
+            case .cachedRegister(let sha), .register(let sha): return sha
+            default: return nil
+            }
+        }
     }
 
-    private struct ScannedFile {
+    fileprivate struct ScannedFile {
         let url: URL
         let mtime: Double
         let size: Int64
@@ -52,16 +84,82 @@ final class BackupRunner: ObservableObject {
         let mtime: Double
     }
 
+    private struct WorkItem {
+        let action: FileAction
+        let url: URL
+        let serverPath: String
+        let mtime: Double
+        let units: Double
+    }
+
     private let api: APIService
     private var isCancelled = false
     private var session = URLSession(configuration: .default)
-    private var scanTask: Task<([ScannedFile], Int, Int, Int), Error>?
+    private var scanTask: Task<([ScannedFile], Int, Int), Error>?
     var runTask: Task<Void, Never>?
 
     private let maxRetries = 3
     private let batchSize  = 100
+    private let registerBatchSize = 200   // /register/batch aceita até 500 (servidor v7.8+)
+
+    // Work-unit model: progress is weighted by estimated cost in "byte-equivalents".
+    // A server round-trip (register/check) costs rtUnit bytes; hashing a byte costs
+    // hashCostFactor of uploading it. Zero-byte files get a floor so they still move the bar.
+    private let rtUnit: Double         = 200_000
+    private let hashCostFactor: Double = 0.25
+    private let minFileWork: Double    = 32_768
+
+    // Execution-segment bookkeeping (set up before phase 2 runs)
+    private var execStart: Double      = 0   // progress value where the transfer segment begins
+    private var execUnitsTotal: Double = 1
+    private var execUnitsDone: Double  = 0
+
+    // UI throttles: published progress/stats update at most ~10×/s. Two independent
+    // gates — addExecUnits (progress bar) fires on every item completion and would
+    // otherwise always leave the shared gate "just consumed", starving the counter
+    // updates in the transfer loop (x of y stuck at 0).
+    private var lastUITick    = Date.distantPast
+    private var lastStatsTick = Date.distantPast
 
     init(api: APIService) { self.api = api }
+
+    // MARK: - Progress helpers
+
+    /// Consumes the progress-bar tick. Returns true at most every `interval` seconds.
+    private func uiTickDue(_ interval: TimeInterval = 0.1) -> Bool {
+        let now = Date()
+        guard now.timeIntervalSince(lastUITick) >= interval else { return false }
+        lastUITick = now
+        return true
+    }
+
+    /// Consumes the counters/stats tick — independent of the progress-bar tick.
+    private func statsTickDue(_ interval: TimeInterval = 0.1) -> Bool {
+        let now = Date()
+        guard now.timeIntervalSince(lastStatsTick) >= interval else { return false }
+        lastStatsTick = now
+        return true
+    }
+
+    /// Publishes progress (monotonic within a run) and mirrors it to the Dock.
+    private func publishProgress(_ value: Double) {
+        let v = min(1, max(value, progress))
+        progress = v
+        DockProgress.shared.update(progress: v)
+    }
+
+    /// Adds byte-equivalent units completed in the transfer segment (may be negative
+    /// when a failed upload's partial bytes are rolled back) and updates the bar.
+    /// No-ops once the run is no longer active so late delegate callbacks can't
+    /// resurrect the Dock progress after done/cancel.
+    func addExecUnits(_ units: Double) {
+        guard status == .running else { return }
+        execUnitsDone += units
+        let frac = min(1, max(0, execUnitsDone) / execUnitsTotal)
+        if uiTickDue() {
+            publishProgress(execStart + (1 - execStart) * frac)
+        }
+    }
 
     func cancel() {
         guard status == .running else { return }
@@ -83,6 +181,13 @@ final class BackupRunner: ObservableObject {
         entries        = []
         stats          = Stats()
         progress       = 0
+        runPhase       = .preparing
+        phaseProcessed = 0
+        phaseTotal     = 0
+        execUnitsDone  = 0
+        execUnitsTotal = 1
+        lastUITick     = .distantPast
+        lastStatsTick  = .distantPast
         wasFullBackup  = true
         var serverError = false
 
@@ -129,14 +234,14 @@ final class BackupRunner: ObservableObject {
         let scannedFiles: [ScannedFile]
         var scanSkippedByExclude = 0
         var scanSkippedByType    = 0
-        var scanTotalYielded     = 0
+        runPhase = .scanning
         do {
-            scanTask = Task.detached(priority: .userInitiated) {
+            scanTask = Task.detached(priority: .userInitiated) { [weak self] in
                 let resourceKeys: Set<URLResourceKey> = [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey, .contentModificationDateKey, .fileSizeKey]
                 var files: [ScannedFile] = []
                 var byExclude = 0
                 var byType    = 0
-                var totalYielded = 0
+                var lastReported = 0
                 // BFS with contentsOfDirectory — avoids FileManager.enumerator stopping
                 // silently mid-tree on certain macOS app contexts (enumerator was yielding
                 // only ~1915 of 5136 items despite errorHandler returning true).
@@ -150,7 +255,6 @@ final class BackupRunner: ObservableObject {
                         options: []
                     )) ?? []
                     for url in items {
-                        totalYielded += 1
                         let name = url.lastPathComponent
                         if excludes.contains(name) || systemIgnoredNames.contains(name) {
                             byExclude += 1; continue
@@ -166,11 +270,18 @@ final class BackupRunner: ObservableObject {
                         let mtime = rv?.contentModificationDate?.timeIntervalSince1970 ?? 0
                         let size  = Int64(rv?.fileSize ?? 0)
                         files.append(ScannedFile(url: url, mtime: mtime, size: size))
+                        if files.count - lastReported >= 250 {
+                            lastReported = files.count
+                            let n = files.count
+                            Task { @MainActor [weak self] in
+                                if self?.runPhase == .scanning { self?.phaseProcessed = n }
+                            }
+                        }
                     }
                 }
-                return (files, byExclude, byType, totalYielded)
+                return (files, byExclude, byType)
             }
-            (scannedFiles, scanSkippedByExclude, scanSkippedByType, scanTotalYielded) = try await scanTask!.value
+            (scannedFiles, scanSkippedByExclude, scanSkippedByType) = try await scanTask!.value
             scanTask = nil
         } catch {
             scanTask = nil
@@ -180,8 +291,11 @@ final class BackupRunner: ObservableObject {
             status = .failed; return
         }
 
-        stats.total = scannedFiles.count
+        phaseProcessed = scannedFiles.count
         log(L("runner.files_found", scannedFiles.count), .info)
+        if scanSkippedByExclude > 0 || scanSkippedByType > 0 {
+            log(L("runner.scan_skipped", scanSkippedByExclude, scanSkippedByType), .info)
+        }
 
         if isCancelled {
             await finalizeVersion(label: label, versionKey: versionKey, ok: false)
@@ -193,7 +307,9 @@ final class BackupRunner: ObservableObject {
         // Smart skip: if enabled, 0 local changes detected, and last full backup is within 7 days,
         // skip classify/execute/sync and absorb directly from the previous version.
         if profile.smartSkip, let prevDoneKey {
-            let noChanges = await detectNoChanges(scanned: scannedFiles, hashCache: hashCache)
+            runPhase   = .checking
+            phaseTotal = 0
+            let noChanges = await hashCache.allUnchanged(scanned: scannedFiles)
             let overdue   = profile.lastFullBackupDate.map {
                 Date().timeIntervalSince($0) > 7 * 86_400
             } ?? true   // nil = never ran a full backup → must run full
@@ -205,12 +321,12 @@ final class BackupRunner: ObservableObject {
             if noChanges && !overdue && prevCountMatches {
                 log(L("runner.smart_skip_detected", scannedFiles.count), .info)
                 wasFullBackup = false
+                runPhase = .finalizing
                 do {
                     let result = try await api.absorb(
                         session: session, label: label,
                         versionKey: versionKey, sourceVersionKey: prevDoneKey)
                     stats.inherited = result.inherited
-                    stats.skipped   = result.skipped
                     log(L("runner.absorb_done", result.inherited, result.skipped), .success)
                 } catch let err as NSError where (500..<600).contains(err.code) {
                     log(L("runner.absorb_server_error", err.localizedDescription), .error)
@@ -254,25 +370,13 @@ final class BackupRunner: ObservableObject {
         let useBatch = api.supportsBatch()
         if useBatch { log(L("runner.batch_mode"), .info) }
 
-        // Split into cache hits and files that need hashing
-        var fastEntries: [(url: URL, serverPath: String, sha256: String, mtime: Double)] = []
-        var slowEntries: [(url: URL, serverPath: String, size: Int64, mtime: Double)] = []
+        let useBatchRegister = api.supportsBatchRegister()
+        if useBatchRegister { log(L("runner.batch_register_mode"), .info) }
 
-        for (file, serverPath) in zip(scannedFiles, serverPaths) {
-            guard !isCancelled else { break }
-            // Local disk cache (fastest: avoids hash computation and server round-trip)
-            if let sha256 = await hashCache.lookup(path: file.url.path, mtime: file.mtime, size: file.size) {
-                fastEntries.append((file.url, serverPath, sha256, file.mtime))
-                continue
-            }
-            // Server version cache
-            if let cached = cache[serverPath], cached.mtime == file.mtime, cached.size == file.size {
-                fastEntries.append((file.url, serverPath, cached.sha256, file.mtime))
-                await hashCache.set(path: file.url.path, mtime: file.mtime, size: file.size, sha256: cached.sha256)
-                continue
-            }
-            slowEntries.append((file.url, serverPath, file.size, file.mtime))
-        }
+        // Split into cache hits and files that need hashing — one actor hop for the
+        // whole file list (a per-file await here costs 2 MainActor↔actor hops per file).
+        let (fastEntries, slowEntries) = await hashCache.classify(
+            scanned: scannedFiles, serverPaths: serverPaths, serverCache: cache)
 
         if isCancelled {
             await finalizeVersion(label: label, versionKey: versionKey, ok: false)
@@ -283,198 +387,75 @@ final class BackupRunner: ObservableObject {
 
         log(L("runner.classifying", fastEntries.count, slowEntries.count), .info)
 
-        // Hash slow files in parallel
-        var hashedFiles: [HashedFile] = []
-        let totalSlow = slowEntries.count
-        let phase1Weight = totalSlow > 0 ? 0.4 : 0.0
-
-        let hashConcurrency = max(2, ProcessInfo.processInfo.activeProcessorCount)
-        await withTaskGroup(of: HashedFile?.self) { group in
-            var inFlight = 0
-            var index    = 0
-            var done     = 0
-
-            while index < slowEntries.count || inFlight > 0 {
-                while inFlight < hashConcurrency && index < slowEntries.count {
-                    guard !isCancelled else { break }
-                    let entry = slowEntries[index]
-                    index   += 1
-                    inFlight += 1
-                    group.addTask { [weak self] in
-                        guard let self else { return nil }
-                        do {
-                            let (sha256, _) = try await self.computeSHA256Streaming(url: entry.url)
-                            return HashedFile(url: entry.url, serverPath: entry.serverPath,
-                                             sha256: sha256, size: entry.size, mtime: entry.mtime)
-                        } catch {
-                            if !(error is CancellationError) {
-                                await accumulator.recordError()
-                                await MainActor.run {
-                                    self.log(L("runner.file_error", entry.url.path,
-                                               error.localizedDescription), .error)
-                                }
-                            }
-                            return nil
-                        }
-                    }
-                }
-                if inFlight > 0, let result = await group.next() {
-                    inFlight -= 1
-                    done     += 1
-                    if let hf = result {
-                        hashedFiles.append(hf)
-                        await hashCache.set(path: hf.url.path, mtime: hf.mtime,
-                                            size: hf.size, sha256: hf.sha256)
-                    }
-                    progress    = Double(done) / Double(max(totalSlow, 1)) * phase1Weight
-                    currentFile = result?.url.lastPathComponent ?? ""
-                    DockProgress.shared.update(progress: progress)
-                }
-            }
-        }
-
-        if isCancelled {
-            await finalizeVersion(label: label, versionKey: versionKey, ok: false)
-            progress = 0; currentFile = ""; status = .cancelled
-            DockProgress.shared.update(progress: nil)
-            log(L("runner.cancelled"), .warning); return
-        }
-
-        // Classify hashed files via batch or individual /check
-        var actionMap: [String: (action: FileAction, url: URL, mtime: Double)] = [:]
-
-        if useBatch && !hashedFiles.isEmpty {
-            let batches = stride(from: 0, to: hashedFiles.count, by: batchSize)
-                .map { Array(hashedFiles[$0..<min($0 + batchSize, hashedFiles.count)]) }
-            for batch in batches {
-                guard !isCancelled else { break }
-                let items = batch.map {
-                    CheckBatchItem(originalPath: $0.serverPath, sha256: $0.sha256,
-                                   size: Int($0.size), mtime: $0.mtime)
-                }
-                do {
-                    let results = try await api.checkBatch(
-                        session: session, label: label,
-                        versionKey: versionKey, items: items)
-                    for (idx, result) in results.enumerated() {
-                        let item = items[idx]; let h = batch[idx]
-                        if !result.needsUpload {
-                            actionMap[item.originalPath] = (.skip, h.url, h.mtime)
-                        } else if result.contentExists {
-                            actionMap[item.originalPath] = (.register(sha256: item.sha256), h.url, h.mtime)
-                        } else {
-                            actionMap[item.originalPath] = (.upload, h.url, h.mtime)
-                        }
-                    }
-                } catch {
-                    log(L("runner.batch_check_error", error.localizedDescription), .warning)
-                    for h in batch {
-                        actionMap[h.serverPath] = (.upload, h.url, h.mtime)
-                    }
-                }
-            }
-        } else {
-            // Fallback: individual /check per file
-            for h in hashedFiles {
-                guard !isCancelled else { break }
-                let checkBody = try? JSONSerialization.data(withJSONObject: [
-                    "backup_label": label,
-                    "version_key":  versionKey,
-                    "original_path": h.serverPath,
-                    "sha256": h.sha256,
-                    "size":   Int(h.size),
-                    "mtime":  h.mtime
-                ] as [String: Any])
-                guard let body = checkBody,
-                      let req  = try? api.buildRequest("/check", method: "POST", body: body),
-                      let (data, _) = try? await session.data(for: req),
-                      let resp = try? JSONDecoder().decode(CheckResponse.self, from: data)
-                else {
-                    actionMap[h.serverPath] = (.upload, h.url, h.mtime); continue
-                }
-                if !resp.needsUpload {
-                    actionMap[h.serverPath] = (.skip, h.url, h.mtime)
-                } else if resp.contentExists {
-                    actionMap[h.serverPath] = (.register(sha256: h.sha256), h.url, h.mtime)
+        // ── Accumulative inherit ─────────────────────────────────────────────
+        // In accumulate mode the final absorb inherits from the previous done
+        // version every path absent from this one. Unchanged files whose exact
+        // content (same serverPath + sha256) is already in that version therefore
+        // don't need a per-file register round-trip — we withhold them and let
+        // absorb bring them in with one request. Files only known to the local
+        // hash cache (never landed in a done version) still register normally.
+        var registerEntries = fastEntries
+        var inheritPlanned  = 0
+        if profile.accumulate, prevDoneKey != nil {
+            var toRegister: [(url: URL, serverPath: String, sha256: String, mtime: Double)] = []
+            toRegister.reserveCapacity(fastEntries.count)
+            for f in fastEntries {
+                if let prev = cache[f.serverPath], prev.sha256 == f.sha256 {
+                    inheritPlanned += 1
                 } else {
-                    actionMap[h.serverPath] = (.upload, h.url, h.mtime)
+                    toRegister.append(f)
                 }
+            }
+            registerEntries = toRegister
+            if inheritPlanned > 0 {
+                log(L("runner.inherit_planned", inheritPlanned), .info)
             }
         }
 
-        // ── PHASE 2: Execute actions ─────────────────────────────────────────
+        // ── Pipelined processing: hash → check → transfer ────────────────────
+        // A producer hashes slow files and classifies them against the server in
+        // batches while the executor registers/uploads concurrently — CPU (hash)
+        // and network (check/upload) overlap instead of running as strict phases.
+        //
+        // Progress is a single pool of byte-equivalent units covering all three
+        // stages. Slow files are assumed to be uploads until the server says
+        // otherwise; the avoided cost is credited at classification time, so the
+        // bar never moves backward.
+        let slowExecEst = slowEntries.reduce(0.0) { $0 + max(Double($1.size), rtUnit) }
+        let hashWork    = slowEntries.reduce(0.0) { $0 + max(Double($1.size), minFileWork) } * hashCostFactor
+        let checkOps    = useBatch
+            ? Double((slowEntries.count + batchSize - 1) / batchSize)
+            : Double(slowEntries.count)
 
-        struct WorkItem {
-            let action: FileAction
-            let url: URL; let serverPath: String; let mtime: Double
+        execStart      = 0
+        execUnitsTotal = max(hashWork + checkOps * rtUnit + slowExecEst
+                             + Double(registerEntries.count) * rtUnit, 1)
+        execUnitsDone  = 0
+        runPhase       = .processing
+        phaseTotal     = slowEntries.count + registerEntries.count
+        phaseProcessed = 0
+        currentFile    = ""
+
+        let (workStream, workCont) = AsyncStream.makeStream(of: WorkItem.self)
+        let producer = Task { [weak self] in
+            await self?.produceWork(slowEntries: slowEntries, fastEntries: registerEntries,
+                                    label: label, versionKey: versionKey,
+                                    useBatch: useBatch, hashCache: hashCache,
+                                    accumulator: accumulator, continuation: workCont)
         }
+        await executeWork(stream: workStream,
+                          concurrencyLimit: max(1, profile.workers),
+                          label: label, versionKey: versionKey,
+                          useBatchRegister: useBatchRegister,
+                          accumulator: accumulator)
+        await producer.value
 
-        var workItems: [WorkItem] = []
-        for f in fastEntries {
-            workItems.append(WorkItem(action: .cachedRegister(sha256: f.sha256),
-                                      url: f.url, serverPath: f.serverPath, mtime: f.mtime))
-        }
-        for (path, entry) in actionMap {
-            workItems.append(WorkItem(action: entry.action, url: entry.url,
-                                      serverPath: path, mtime: entry.mtime))
-        }
-
-        let totalWork        = workItems.count
-        let concurrencyLimit = max(1, profile.workers)
-        let phase2Start      = phase1Weight
-
-        await withTaskGroup(of: Void.self) { group in
-            var inFlight        = 0
-            var index           = 0
-            var completedPhase2 = 0
-
-            while index < workItems.count || inFlight > 0 {
-                while inFlight < concurrencyLimit && index < workItems.count {
-                    guard !isCancelled else { break }
-                    let item = workItems[index]
-                    index   += 1
-                    inFlight += 1
-
-                    group.addTask { [weak self] in
-                        guard let self else { return }
-                        do {
-                            let actionStr = try await self.executeActionWithRetry(
-                                item.action, url: item.url,
-                                label: label, versionKey: versionKey,
-                                serverPath: item.serverPath, mtime: item.mtime)
-                            await accumulator.record(action: actionStr)
-                        } catch {
-                            if !(error is CancellationError) {
-                                await accumulator.recordError()
-                                await MainActor.run {
-                                    self.log(L("runner.file_error", item.url.path,
-                                               error.localizedDescription), .error)
-                                }
-                            }
-                        }
-                        await MainActor.run {
-                            self.currentFile = item.url.lastPathComponent
-                        }
-                    }
-                }
-
-                if isCancelled && inFlight == 0 { break }
-
-                if inFlight > 0 {
-                    await group.next()
-                    inFlight -= 1
-                    completedPhase2 += 1
-                    progress = phase2Start + Double(completedPhase2) / Double(max(totalWork, 1)) * (1.0 - phase2Start)
-                    DockProgress.shared.update(progress: progress)
-                    let s = await accumulator.snapshot()
-                    stats.uploaded   = s.uploaded
-                    stats.registered = s.registered
-                    stats.cached     = s.cached
-                    stats.ignored    = s.ignored
-                    stats.errors     = s.errors
-                }
-            }
-        }
+        let finalStats = await accumulator.snapshot()
+        stats.uploaded   = finalStats.uploaded
+        stats.registered = finalStats.registered
+        stats.cached     = finalStats.cached
+        stats.ignored    = finalStats.ignored
+        stats.errors     = finalStats.errors
 
         if isCancelled {
             await finalizeVersion(label: label, versionKey: versionKey, ok: false)
@@ -484,6 +465,8 @@ final class BackupRunner: ObservableObject {
         }
 
         // 6. Sync
+        runPhase = .finalizing
+        publishProgress(1.0)
         do {
             let synced = try await syncVersion(label: label,
                                                versionKey: versionKey,
@@ -508,13 +491,26 @@ final class BackupRunner: ObservableObject {
                         session: session, label: label,
                         versionKey: versionKey, sourceVersionKey: prevDoneKey)
                     stats.inherited = result.inherited
-                    stats.skipped   = result.skipped
                     log(L("runner.absorb_done", result.inherited, result.skipped), .success)
+                    // Withheld unchanged files count on this absorb — it must inherit
+                    // at least that many paths, or the version is missing files.
+                    if result.inherited < inheritPlanned {
+                        log(L("runner.inherit_shortfall", inheritPlanned, result.inherited), .error)
+                        serverError = true
+                    }
                 } catch let err as NSError where (500..<600).contains(err.code) {
                     log(L("runner.absorb_server_error", err.localizedDescription), .error)
                     serverError = true
                 } catch {
-                    log(L("runner.absorb_error", error.localizedDescription), .warning)
+                    if inheritPlanned > 0 {
+                        // Absorb was load-bearing: without it the withheld unchanged
+                        // files would silently vanish from this version.
+                        log(L("runner.absorb_required_failed", inheritPlanned,
+                              error.localizedDescription), .error)
+                        serverError = true
+                    } else {
+                        log(L("runner.absorb_error", error.localizedDescription), .warning)
+                    }
                 }
             }
         }
@@ -537,20 +533,347 @@ final class BackupRunner: ObservableObject {
               stats.uploaded, stats.registered, stats.cached, stats.ignored, stats.errors), .success)
     }
 
-    // MARK: - Smart Skip Detection
+    // MARK: - Pipeline
 
-    private func detectNoChanges(
-        scanned: [ScannedFile],
-        hashCache: LocalHashCache
-    ) async -> Bool {
-        let cacheCount = await hashCache.count
-        guard scanned.count == cacheCount, cacheCount > 0 else { return false }
-        for file in scanned {
-            guard await hashCache.lookup(
-                path: file.url.path, mtime: file.mtime, size: file.size
-            ) != nil else { return false }
+    /// Producer: yields cache hits immediately, then hashes slow files in parallel,
+    /// classifying them against the server in batches as hashes complete. Everything
+    /// it emits is consumed concurrently by `executeWork`.
+    private func produceWork(
+        slowEntries: [(url: URL, serverPath: String, size: Int64, mtime: Double)],
+        fastEntries: [(url: URL, serverPath: String, sha256: String, mtime: Double)],
+        label: String, versionKey: String,
+        useBatch: Bool, hashCache: LocalHashCache,
+        accumulator: StatsAccumulator,
+        continuation: AsyncStream<WorkItem>.Continuation
+    ) async {
+        defer { continuation.finish() }
+
+        // Cache hits need no hashing/checking — the executor starts registering
+        // them while hashing is still running.
+        for f in fastEntries {
+            continuation.yield(WorkItem(action: .cachedRegister(sha256: f.sha256),
+                                        url: f.url, serverPath: f.serverPath,
+                                        mtime: f.mtime, units: rtUnit))
         }
-        return true
+
+        guard !slowEntries.isEmpty else { return }
+
+        func yieldClassified(_ h: HashedFile, needsUpload: Bool, contentExists: Bool) {
+            let action: FileAction
+            let units:  Double
+            if !needsUpload {
+                action = .skip;                       units = rtUnit
+            } else if contentExists {
+                action = .register(sha256: h.sha256); units = rtUnit
+            } else {
+                action = .upload;                     units = max(Double(h.size), rtUnit)
+            }
+            if case .upload = action {} else {
+                // The progress pool assumed an upload for this file — credit the avoided cost.
+                addExecUnits(max(Double(h.size), rtUnit) - rtUnit)
+            }
+            continuation.yield(WorkItem(action: action, url: h.url,
+                                        serverPath: h.serverPath, mtime: h.mtime,
+                                        units: units))
+        }
+
+        func classifyIndividually(_ h: HashedFile) async {
+            let checkBody = try? JSONSerialization.data(withJSONObject: [
+                "backup_label": label,
+                "version_key":  versionKey,
+                "original_path": h.serverPath,
+                "sha256": h.sha256,
+                "size":   Int(h.size),
+                "mtime":  h.mtime
+            ] as [String: Any])
+            guard let body = checkBody,
+                  let req  = try? api.buildRequest("/check", method: "POST", body: body),
+                  let (data, _) = try? await session.data(for: req),
+                  let resp = try? JSONDecoder().decode(CheckResponse.self, from: data)
+            else {
+                yieldClassified(h, needsUpload: true, contentExists: false); return
+            }
+            yieldClassified(h, needsUpload: resp.needsUpload, contentExists: resp.contentExists)
+        }
+
+        func classify(_ batch: [HashedFile]) async {
+            guard !batch.isEmpty else { return }
+            if useBatch {
+                let items = batch.map {
+                    CheckBatchItem(originalPath: $0.serverPath, sha256: $0.sha256,
+                                   size: Int($0.size), mtime: $0.mtime)
+                }
+                do {
+                    let results = try await api.checkBatch(
+                        session: session, label: label,
+                        versionKey: versionKey, items: items)
+                    for (idx, result) in results.enumerated() {
+                        yieldClassified(batch[idx],
+                                        needsUpload: result.needsUpload,
+                                        contentExists: result.contentExists)
+                    }
+                } catch {
+                    log(L("runner.batch_check_error", error.localizedDescription), .warning)
+                    for h in batch {
+                        yieldClassified(h, needsUpload: true, contentExists: false)
+                    }
+                }
+                addExecUnits(rtUnit)   // one check round-trip completed
+            } else {
+                for h in batch {
+                    guard !isCancelled else { return }
+                    await classifyIndividually(h)
+                    addExecUnits(rtUnit)
+                }
+            }
+        }
+
+        // Hash in parallel; classify in batches as results arrive.
+        var pendingBatch: [HashedFile] = []
+        let hashConcurrency = max(2, ProcessInfo.processInfo.activeProcessorCount)
+        await withTaskGroup(of: HashedFile?.self) { group in
+            var inFlight = 0
+            var index    = 0
+
+            while index < slowEntries.count || inFlight > 0 {
+                while inFlight < hashConcurrency && index < slowEntries.count {
+                    guard !isCancelled else { break }
+                    let entry = slowEntries[index]
+                    index   += 1
+                    inFlight += 1
+                    group.addTask { [weak self] in
+                        guard let self else { return nil }
+                        do {
+                            let (sha256, _) = try await computeSHA256Streaming(url: entry.url)
+                            return HashedFile(url: entry.url, serverPath: entry.serverPath,
+                                             sha256: sha256, size: entry.size, mtime: entry.mtime)
+                        } catch {
+                            if !(error is CancellationError) {
+                                await accumulator.recordError()
+                                await MainActor.run {
+                                    self.log(L("runner.file_error", entry.url.path,
+                                               error.localizedDescription), .error)
+                                }
+                            }
+                            return nil
+                        }
+                    }
+                }
+                if isCancelled && inFlight == 0 { break }
+                if inFlight > 0, let result = await group.next() {
+                    inFlight -= 1
+                    if let hf = result {
+                        await hashCache.set(path: hf.url.path, mtime: hf.mtime,
+                                            size: hf.size, sha256: hf.sha256)
+                        addExecUnits(max(Double(hf.size), minFileWork) * hashCostFactor)
+                        pendingBatch.append(hf)
+                        if pendingBatch.count >= batchSize {
+                            let batch = pendingBatch
+                            pendingBatch = []
+                            await classify(batch)
+                        }
+                    }
+                }
+            }
+        }
+        if !isCancelled {
+            await classify(pendingBatch)
+        }
+    }
+
+    /// Executor: consumes work items as the producer emits them, keeping at most
+    /// `concurrencyLimit` tasks in flight. With a v7.8+ server, register items are
+    /// coalesced into /register/batch requests (one commit per batch server-side)
+    /// instead of one request per file; uploads and skips run individually as before.
+    /// A batch occupies one worker slot, so batches and uploads share the pool.
+    private func executeWork(
+        stream: AsyncStream<WorkItem>,
+        concurrencyLimit: Int,
+        label: String, versionKey: String,
+        useBatchRegister: Bool,
+        accumulator: StatsAccumulator
+    ) async {
+        await withTaskGroup(of: Int.self) { group in
+            var inFlight       = 0
+            var completed      = 0
+            var registerBuffer: [WorkItem] = []
+
+            for await item in stream {
+                guard !isCancelled else { break }
+
+                // Batchable registers accumulate until a full batch is ready.
+                if useBatchRegister, item.action.registerSha != nil {
+                    registerBuffer.append(item)
+                    guard registerBuffer.count >= registerBatchSize else { continue }
+                }
+
+                if inFlight >= concurrencyLimit {
+                    completed += await group.next() ?? 0
+                    inFlight  -= 1
+                    await refreshExecCounters(completed: completed, accumulator: accumulator)
+                }
+
+                if useBatchRegister, item.action.registerSha != nil {
+                    let batch = registerBuffer
+                    registerBuffer = []
+                    group.addTask { [weak self] in
+                        await self?.executeRegisterBatch(batch, label: label,
+                                                         versionKey: versionKey,
+                                                         accumulator: accumulator) ?? 0
+                    }
+                } else {
+                    group.addTask { [weak self] in
+                        guard let self else { return 1 }
+                        do {
+                            let actionStr = try await self.executeActionWithRetry(
+                                item.action, url: item.url,
+                                label: label, versionKey: versionKey,
+                                serverPath: item.serverPath, mtime: item.mtime,
+                                units: item.units)
+                            await accumulator.record(action: actionStr)
+                        } catch {
+                            if !(error is CancellationError) {
+                                await accumulator.recordError()
+                                await MainActor.run {
+                                    self.log(L("runner.file_error", item.url.path,
+                                               error.localizedDescription), .error)
+                                }
+                            }
+                        }
+                        return 1
+                    }
+                }
+                inFlight += 1
+            }
+
+            // Flush the final partial batch.
+            if !isCancelled, !registerBuffer.isEmpty {
+                if inFlight >= concurrencyLimit {
+                    completed += await group.next() ?? 0
+                    inFlight  -= 1
+                    await refreshExecCounters(completed: completed, accumulator: accumulator)
+                }
+                let batch = registerBuffer
+                registerBuffer = []
+                group.addTask { [weak self] in
+                    await self?.executeRegisterBatch(batch, label: label,
+                                                     versionKey: versionKey,
+                                                     accumulator: accumulator) ?? 0
+                }
+                inFlight += 1
+            }
+
+            while inFlight > 0 {
+                completed += await group.next() ?? 0
+                inFlight  -= 1
+                await refreshExecCounters(completed: completed, accumulator: accumulator)
+            }
+            phaseProcessed = completed
+        }
+    }
+
+    /// Sends one /register/batch request for a group of register items and settles
+    /// each one: registered → stats + progress credit; content missing server-side →
+    /// escalated to a full upload (the batch equivalent of the HTTP-400 escalation);
+    /// batch failed after retries → falls back to the per-file register path.
+    /// Returns how many items were settled (feeds the "x of y" counter).
+    private func executeRegisterBatch(
+        _ batch: [WorkItem],
+        label: String, versionKey: String,
+        accumulator: StatsAccumulator
+    ) async -> Int {
+        let items = batch.map {
+            RegisterBatchItem(originalPath: $0.serverPath,
+                              sha256: $0.action.registerSha ?? "",
+                              mtime: $0.mtime)
+        }
+
+        var response: RegisterBatchResponse?
+        for attempt in 1...maxRetries {
+            guard !isCancelled else { break }
+            do {
+                response = try await api.registerBatch(
+                    session: session, label: label,
+                    versionKey: versionKey, items: items)
+                break
+            } catch {
+                guard !isCancelled, attempt < maxRetries else {
+                    log(L("runner.register_batch_error", error.localizedDescription), .warning)
+                    break
+                }
+                try? await Task.sleep(nanoseconds: UInt64(500_000_000) * UInt64(attempt))
+            }
+        }
+
+        guard let response else {
+            // Fallback: individual register path (same philosophy as batch-check errors).
+            var settled = 0
+            for item in batch {
+                guard !isCancelled else { break }
+                do {
+                    let actionStr = try await executeActionWithRetry(
+                        item.action, url: item.url,
+                        label: label, versionKey: versionKey,
+                        serverPath: item.serverPath, mtime: item.mtime,
+                        units: item.units)
+                    await accumulator.record(action: actionStr)
+                } catch {
+                    if !(error is CancellationError) {
+                        await accumulator.recordError()
+                        log(L("runner.file_error", item.url.path,
+                              error.localizedDescription), .error)
+                    }
+                }
+                settled += 1
+            }
+            return settled
+        }
+
+        // Results are positional (the server appends them in request order), which is
+        // the only correct alignment when the batch contains duplicate paths.
+        var settled = 0
+        for (idx, result) in response.results.enumerated() where idx < batch.count {
+            let item = batch[idx]
+            if result.registered {
+                if case .cachedRegister = item.action {
+                    await accumulator.record(action: "cached")
+                } else {
+                    await accumulator.record(action: "register")
+                }
+                addExecUnits(item.units)
+            } else {
+                guard !isCancelled else { break }
+                do {
+                    let actionStr = try await executeActionWithRetry(
+                        .upload, url: item.url,
+                        label: label, versionKey: versionKey,
+                        serverPath: item.serverPath, mtime: item.mtime,
+                        units: item.units)
+                    await accumulator.record(action: actionStr)
+                } catch {
+                    if !(error is CancellationError) {
+                        await accumulator.recordError()
+                        log(L("runner.file_error", item.url.path,
+                              error.localizedDescription), .error)
+                    }
+                }
+            }
+            settled += 1
+        }
+        return settled
+    }
+
+    /// Throttled refresh of the "x of y" counter and the stats row during execution.
+    /// Progress units themselves are credited inside executeAction.
+    private func refreshExecCounters(completed: Int, accumulator: StatsAccumulator) async {
+        guard statsTickDue() else { return }
+        phaseProcessed = completed
+        let s = await accumulator.snapshot()
+        stats.uploaded   = s.uploaded
+        stats.registered = s.registered
+        stats.cached     = s.cached
+        stats.ignored    = s.ignored
+        stats.errors     = s.errors
     }
 
     // MARK: - Action Execution
@@ -558,7 +881,7 @@ final class BackupRunner: ObservableObject {
     private func executeActionWithRetry(
         _ action: FileAction,
         url: URL, label: String, versionKey: String,
-        serverPath: String, mtime: Double
+        serverPath: String, mtime: Double, units: Double
     ) async throws -> String {
         var currentAction = action
         var lastError: Error?
@@ -567,7 +890,8 @@ final class BackupRunner: ObservableObject {
             do {
                 return try await executeAction(currentAction, url: url, label: label,
                                                versionKey: versionKey,
-                                               serverPath: serverPath, mtime: mtime)
+                                               serverPath: serverPath, mtime: mtime,
+                                               units: units)
             } catch {
                 lastError = error
                 guard !isCancelled, attempt < maxRetries else { break }
@@ -589,13 +913,14 @@ final class BackupRunner: ObservableObject {
     private func executeAction(
         _ action: FileAction,
         url: URL, label: String, versionKey: String,
-        serverPath: String, mtime: Double
+        serverPath: String, mtime: Double, units: Double
     ) async throws -> String {
         guard !isCancelled else { throw CancellationError() }
         let pathB64 = Data(serverPath.utf8).base64EncodedString()
 
         switch action {
         case .skip:
+            addExecUnits(units)
             return "ignore"
 
         case .cachedRegister(let sha256), .register(let sha256):
@@ -612,10 +937,12 @@ final class BackupRunner: ObservableObject {
                 throw NSError(domain: "NestVault", code: http.statusCode,
                               userInfo: [NSLocalizedDescriptionKey: "HTTP \(http.statusCode) — \(msg.prefix(300))"])
             }
+            addExecUnits(units)
             if case .cachedRegister = action { return "cached" }
             return "register"
 
         case .upload:
+            currentFile = url.lastPathComponent
             var req = try api.buildRequest("/upload", method: "POST", body: nil)
             // Large files can take a long time to encrypt/store server-side after the body is
             // fully received — use a generous idle timeout so the server has room to process.
@@ -625,12 +952,27 @@ final class BackupRunner: ObservableObject {
             req.setValue(pathB64,                    forHTTPHeaderField: "X-Original-Path")
             req.setValue(String(mtime),              forHTTPHeaderField: "X-Mtime")
             req.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
-            let (respData, response) = try await session.upload(for: req, fromFile: url)
+            // Streams sent-byte deltas into the progress bar while the body uploads;
+            // on failure the partial credit is rolled back so retries don't double-count.
+            let progressDelegate = UploadProgressDelegate { [weak self] delta in
+                Task { @MainActor [weak self] in self?.addExecUnits(Double(delta)) }
+            }
+            var succeeded = false
+            defer {
+                if !succeeded {
+                    let reported = progressDelegate.totalReported
+                    if reported > 0 { addExecUnits(-Double(reported)) }
+                }
+            }
+            let (respData, response) = try await session.upload(for: req, fromFile: url,
+                                                                delegate: progressDelegate)
             if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
                 let msg = String(data: respData, encoding: .utf8) ?? "(sem mensagem)"
                 throw NSError(domain: "NestVault", code: http.statusCode,
                               userInfo: [NSLocalizedDescriptionKey: "HTTP \(http.statusCode) — \(msg.prefix(300))"])
             }
+            succeeded = true
+            addExecUnits(units - Double(progressDelegate.totalReported))
             return "upload"
         }
     }
@@ -733,47 +1075,18 @@ final class BackupRunner: ObservableObject {
         log(L("runner.finalize_failed"), .warning)
     }
 
-    // MARK: - SHA-256
-
-    private func computeSHA256Streaming(url: URL) async throws -> (sha256: String, size: Int) {
-        return try await Task.detached(priority: .userInitiated) {
-            let bufferSize = 4_194_304  // 4 MB — fewer syscalls, better throughput than 1 MB
-            guard let stream = InputStream(url: url) else {
-                throw NSError(domain: "NestVault", code: -1,
-                              userInfo: [NSLocalizedDescriptionKey:
-                                "Não foi possível abrir: \(url.path)"])
-            }
-            stream.open()
-            defer { stream.close() }
-
-            var hasher    = SHA256()
-            var totalSize = 0
-            let buffer    = UnsafeMutableRawBufferPointer.allocate(byteCount: bufferSize, alignment: 1)
-            defer { buffer.deallocate() }
-
-            while stream.hasBytesAvailable {
-                let read = stream.read(
-                    buffer.baseAddress!.assumingMemoryBound(to: UInt8.self),
-                    maxLength: bufferSize)
-                if read < 0 {
-                    throw stream.streamError ?? NSError(domain: "NestVault", code: -1,
-                        userInfo: [NSLocalizedDescriptionKey: "Erro de leitura: \(url.path)"])
-                }
-                if read == 0 { break }
-                // Update directly from raw buffer — avoids allocating a Data per chunk
-                hasher.update(bufferPointer: UnsafeRawBufferPointer(start: buffer.baseAddress, count: read))
-                totalSize += read
-            }
-
-            let sha256 = hasher.finalize().compactMap { String(format: "%02x", $0) }.joined()
-            return (sha256, totalSize)
-        }.value
-    }
-
     // MARK: - Log
+
+    private let maxLogEntries = 2000
 
     private func log(_ text: String, _ kind: LogEntry.Kind) {
         entries.append(LogEntry(text: text, kind: kind))
+        // Cap with hysteresis so trimming is amortized (removeFirst is O(n)) —
+        // an error storm on a huge tree would otherwise grow the list unbounded
+        // and degrade the whole UI.
+        if entries.count > maxLogEntries + 500 {
+            entries.removeFirst(entries.count - maxLogEntries)
+        }
     }
 }
 
@@ -807,13 +1120,47 @@ private actor LocalHashCache {
         store = decoded
     }
 
-    func lookup(path: String, mtime: Double, size: Int64) -> String? {
-        guard let e = store[path], e.mtime == mtime, e.size == size else { return nil }
-        return e.sha256
-    }
-
     func set(path: String, mtime: Double, size: Int64, sha256: String) {
         store[path] = Entry(mtime: mtime, size: size, sha256: sha256)
+    }
+
+    /// Splits the scanned files into cache hits (fast: sha256 already known) and files
+    /// that need hashing (slow), in a single actor hop for the whole list.
+    /// Server-cache hits are absorbed into the local cache as a side effect.
+    func classify(
+        scanned: [BackupRunner.ScannedFile],
+        serverPaths: [String],
+        serverCache: [String: FileCache]
+    ) -> (fast: [(url: URL, serverPath: String, sha256: String, mtime: Double)],
+          slow: [(url: URL, serverPath: String, size: Int64, mtime: Double)]) {
+        var fast: [(url: URL, serverPath: String, sha256: String, mtime: Double)] = []
+        var slow: [(url: URL, serverPath: String, size: Int64, mtime: Double)]   = []
+        for (file, serverPath) in zip(scanned, serverPaths) {
+            // Local disk cache (fastest: avoids hash computation and server round-trip)
+            if let e = store[file.url.path], e.mtime == file.mtime, e.size == file.size {
+                fast.append((file.url, serverPath, e.sha256, file.mtime))
+                continue
+            }
+            // Server version cache
+            if let cached = serverCache[serverPath], cached.mtime == file.mtime, cached.size == file.size {
+                fast.append((file.url, serverPath, cached.sha256, file.mtime))
+                store[file.url.path] = Entry(mtime: file.mtime, size: file.size, sha256: cached.sha256)
+                continue
+            }
+            slow.append((file.url, serverPath, file.size, file.mtime))
+        }
+        return (fast, slow)
+    }
+
+    /// Smart-skip detection: true when every scanned file has an exact mtime+size match
+    /// in the cache and the counts line up — again a single hop for the whole list.
+    func allUnchanged(scanned: [BackupRunner.ScannedFile]) -> Bool {
+        guard scanned.count == store.count, !store.isEmpty else { return false }
+        for file in scanned {
+            guard let e = store[file.url.path], e.mtime == file.mtime, e.size == file.size
+            else { return false }
+        }
+        return true
     }
 
     func prune(keepingPaths paths: Set<String>) {
@@ -823,6 +1170,36 @@ private actor LocalHashCache {
     func save() {
         guard let data = try? JSONEncoder().encode(store) else { return }
         try? data.write(to: fileURL, options: .atomic)
+    }
+}
+
+// MARK: - Upload Progress Delegate
+
+/// Per-task URLSession delegate that forwards sent-byte deltas (throttled to ≥2 MB steps)
+/// so large uploads move the progress bar while the body is still being sent.
+private final class UploadProgressDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    private let lock = NSLock()
+    private var reported: Int64 = 0
+    private let minStep: Int64  = 2_000_000
+    private let onDelta: @Sendable (Int64) -> Void
+
+    init(onDelta: @escaping @Sendable (Int64) -> Void) { self.onDelta = onDelta }
+
+    /// Total bytes already credited to the progress bar for this task.
+    var totalReported: Int64 {
+        lock.lock(); defer { lock.unlock() }
+        return reported
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    didSendBodyData bytesSent: Int64, totalBytesSent: Int64,
+                    totalBytesExpectedToSend: Int64) {
+        lock.lock()
+        let delta = totalBytesSent - reported
+        guard delta >= minStep else { lock.unlock(); return }
+        reported = totalBytesSent
+        lock.unlock()
+        onDelta(delta)
     }
 }
 

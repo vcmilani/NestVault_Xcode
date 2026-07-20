@@ -8,10 +8,13 @@ struct BackupRunnerSheet: View {
 
     let profile: BackupProfile
     @StateObject private var runner: BackupRunner
+    @State private var lastLogScroll = Date.distantPast
 
-    init(profile: BackupProfile, api: APIService) {
+    init(profile: BackupProfile, api: APIService, existingRunner: BackupRunner? = nil) {
         self.profile = profile
-        self._runner = StateObject(wrappedValue: BackupRunner(api: api))
+        // Re-attach to an already-running backup of this profile instead of creating
+        // a second runner (which allowed the same label to run twice in parallel).
+        self._runner = StateObject(wrappedValue: existingRunner ?? BackupRunner(api: api))
     }
 
     var body: some View {
@@ -44,19 +47,30 @@ struct BackupRunnerSheet: View {
             // ── Progress ─────────────────────────────────────────────
             if runner.status == .running {
                 VStack(alignment: .leading, spacing: 8) {
-                    ProgressView(value: runner.progress)
-                        .progressViewStyle(.linear)
                     HStack {
-                        if !runner.currentFile.isEmpty {
-                            Text(runner.currentFile)
-                                .font(.caption.monospaced())
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-                        Spacer()
-                        Text("\(Int(runner.progress * 100))%")
-                            .font(.caption.monospacedDigit())
+                        Text(runner.phaseDescription)
+                            .font(.caption.weight(.medium))
                             .foregroundStyle(.secondary)
+                        Spacer()
+                        if !runner.isIndeterminatePhase {
+                            Text("\(Int(runner.progress * 100))%")
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    if runner.isIndeterminatePhase {
+                        ProgressView()
+                            .progressViewStyle(.linear)
+                    } else {
+                        ProgressView(value: runner.progress)
+                            .progressViewStyle(.linear)
+                    }
+                    if !runner.currentFile.isEmpty {
+                        Text(runner.currentFile)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
                     }
                 }
                 .padding(.horizontal, 18)
@@ -109,9 +123,20 @@ struct BackupRunnerSheet: View {
                 }
                 .frame(minHeight: 200)
                 .background(Color(NSColor.textBackgroundColor))
-                .onChange(of: runner.entries.count) { _ in
+                .onChange(of: runner.entries.count) { _, _ in
+                    // Throttle: one animated scroll per append queues layout work
+                    // that snowballs when the log grows fast (e.g. many file errors).
+                    let now = Date()
+                    guard now.timeIntervalSince(lastLogScroll) > 0.2 else { return }
+                    lastLogScroll = now
                     if let last = runner.entries.last {
-                        withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
+                        proxy.scrollTo(last.id, anchor: .bottom)
+                    }
+                }
+                .onChange(of: runner.status) { _, _ in
+                    // Always land on the final line when the run settles.
+                    if let last = runner.entries.last {
+                        proxy.scrollTo(last.id, anchor: .bottom)
                     }
                 }
             }
@@ -121,11 +146,11 @@ struct BackupRunnerSheet: View {
             // ── Actions ──────────────────────────────────────────────
             HStack {
                 if runner.status == .done || runner.status == .failed || runner.status == .cancelled {
-                    Button("runner.close") { dismiss() }
+                    Button("common.close") { dismiss() }
                 }
                 Spacer()
                 if runner.status == .idle {
-                    Button("runner.cancel") { dismiss() }
+                    Button("common.cancel") { dismiss() }
                 }
                 if runner.status == .running {
                     Button("runner.stop") {
@@ -150,11 +175,17 @@ struct BackupRunnerSheet: View {
                     runner.runTask = task
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(runner.status == .running)
+                .disabled(runner.status == .running || labelBusyElsewhere)
+                .help(labelBusyElsewhere ? "runner.label_busy" : "")
             }
             .padding(16)
         }
         .frame(width: 560, height: 500)
+    }
+
+    /// Another runner (manual, scheduled or queue) is already backing up this label.
+    private var labelBusyElsewhere: Bool {
+        schedule.isBusy(label: profile.label, excluding: runner)
     }
 
     // MARK: - Status Badge

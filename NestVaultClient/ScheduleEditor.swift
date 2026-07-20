@@ -134,7 +134,7 @@ struct ScheduleEditor: View {
             .padding(.top, 12)
         }
         .onAppear { local = schedule }
-        .onChange(of: local) { newLocal in
+        .onChange(of: local) { _, newLocal in
             schedule = newLocal
         }
     }

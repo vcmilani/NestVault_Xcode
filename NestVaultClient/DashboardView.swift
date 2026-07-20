@@ -43,7 +43,7 @@ struct DashboardView: View {
                         VStack(alignment: .leading, spacing: 3) {
                             Text("dashboard.server_unreachable")
                                 .font(.subheadline.weight(.semibold))
-                            Text(api.connectionError ?? "Verifique a URL e a API Key nas configurações.")
+                            Text(api.connectionError ?? L("dashboard.check_settings"))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -75,7 +75,7 @@ struct DashboardView: View {
                         }
 
                         VStack(spacing: 0) {
-                            ForEach(Array(api.backups.enumerated()), id: \.offset) { idx, backup in
+                            ForEach(Array(api.backups.enumerated()), id: \.element.id) { idx, backup in
                                 BackupRowView(backup: backup)
                                 if idx < api.backups.count - 1 {
                                     Divider().padding(.leading, 52)
@@ -97,13 +97,13 @@ struct DashboardView: View {
                             icon: "arrow.up.to.line.compact",
                             color: .blue,
                             title: "dashboard.info.versions.title",
-                            bodyText: "Cada execução cria uma versão com timestamp automático. Você pode ter quantas versões precisar de um mesmo label — cada uma captura o estado completo da pasta naquele momento."
+                            bodyText: "dashboard.info.versions.body"
                         )
                         InfoCard(
                             icon: "doc.badge.arrow.up",
                             color: .green,
                             title: "dashboard.info.dedup.title",
-                            bodyText: "O conteúdo físico é armazenado apenas uma vez por SHA-256. Arquivos idênticos entre versões ou labels compartilham o mesmo bloco — zero bytes trafegam na rede se o conteúdo já existe."
+                            bodyText: "dashboard.info.dedup.body"
                         )
                         InfoCard(
                             icon: "doc.on.doc",
@@ -115,7 +115,7 @@ struct DashboardView: View {
                             icon: "lock.shield",
                             color: .purple,
                             title: "dashboard.info.isolation.title",
-                            bodyText: "Cada label tem seu próprio conjunto de versões. Operações de backup, restore e cleanup são escopadas ao label — um backup nunca interfere em outro."
+                            bodyText: "dashboard.info.isolation.body"
                         )
                     }
                 }
