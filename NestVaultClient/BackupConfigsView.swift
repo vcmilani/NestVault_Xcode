@@ -6,6 +6,7 @@ struct BackupConfigsView: View {
     @EnvironmentObject var api:      APIService
     @EnvironmentObject var store:    ConfigStore
     @EnvironmentObject var schedule: ScheduleManager
+    @EnvironmentObject var activity: ActivityLog
 
     @State private var selected:    BackupProfile?
     @State private var editing:     BackupProfile?
@@ -118,6 +119,7 @@ struct BackupConfigsView: View {
                 .environmentObject(api)
                 .environmentObject(store)
                 .environmentObject(schedule)
+                .environmentObject(activity)
         }
         .alert("mybackups.delete_server_title", isPresented: $showDeleteBackup) {
             Button("common.cancel", role: .cancel) {}

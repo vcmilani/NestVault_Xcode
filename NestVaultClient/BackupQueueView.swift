@@ -4,6 +4,7 @@ struct BackupQueueSheet: View {
     @EnvironmentObject var api:      APIService
     @EnvironmentObject var store:    ConfigStore
     @EnvironmentObject var schedule: ScheduleManager
+    @EnvironmentObject var activity: ActivityLog
     @Environment(\.dismiss) private var dismiss
 
     @State private var selection: Set<UUID> = []
@@ -188,12 +189,12 @@ struct BackupQueueSheet: View {
     private func startQueue() {
         let profiles = selectedProfiles
         guard !profiles.isEmpty else { return }
-        let q = BackupQueue(api: api, profiles: profiles)
+        let q = BackupQueue(api: api, profiles: profiles, store: store, activity: activity)
         queue = q
         phase = .running
         Task {
             schedule.registerQueue(q)
-            await q.run()
+            await q.run(trigger: .manual)
             schedule.clearQueue(q)
         }
     }

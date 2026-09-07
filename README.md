@@ -1,4 +1,4 @@
-# NestVault — macOS Client  `v4.0.0`
+# NestVault — macOS Client  `v5.0.0`
 
 Native macOS SwiftUI client for the [NestVault](https://github.com/vcmilani/NestVault) self-hosted backup server.
 
@@ -32,13 +32,18 @@ NestVault_Xcode/
     ├── ConfigStore.swift          # Local profile persistence (UserDefaults)
     │
     ├── # Views
-    ├── DashboardView.swift        # Global stats · system explanation
+    ├── DashboardView.swift        # Global stats · "On this Mac" section · recent activity · collapsible server backups
     ├── BackupsView.swift          # 3-panel browser: backups → versions → files
     ├── BackupConfigsView.swift    # Profile CRUD · ExcludesEditor · ScheduleEditor
     ├── CleanupView.swift          # Old version cleanup with preview
     ├── SettingsView.swift         # Server URL · API Key · startup · system status
+    ├── ActivityView.swift         # Run history: day groups, filters, per-event log excerpt
     ├── MenuBarView.swift          # Compact menu bar panel
     ├── PlaceholderView.swift      # ContentUnavailableView substitute (macOS 13/14)
+    │
+    ├── # Activity
+    ├── ActivityLog.swift          # ActivityEvent model · persisted history (Application Support JSON) · unread tracking
+    ├── RunRecorder.swift          # Single completion funnel — persists lastRun, records the event, applies the notification policy
     │
     ├── # Backup Execution
     ├── BackupRunner.swift         # Pipelined backup engine (hash→check→register/upload overlapped) · byte-weighted progress · dock progress
@@ -88,9 +93,20 @@ NestVault_Xcode/
 
 ### Dashboard
 - Cards: total backups, versions, files, and storage
-- List of active backups with size and last version date
+- **On this Mac** (first section): every local profile joined with its server counterpart — status glyph from `lastRunStatus`, version count and size from the server, last run, next scheduled run, live progress while running, and a **Run** button (or **View**, re-attaching to an in-flight run). Profiles with no server counterpart yet, no label, or no source folder are shown explicitly rather than hidden. **Run all…** opens the existing queue sheet
+- The local↔server join is the `label`, matched trimmed and case-insensitively — the server has no reliable machine identity (`client_name` is written once at creation and never updated)
+- **Recent activity**: the last three events, with a link into the Activity screen
+- **Other backups on the server**: everything without a matching local profile, collapsed by default (`dashboard.showOthers`)
 - Explanation panel: SHA-256 deduplication, versioning, label isolation, snapshots
 - Alert banner when the server is unreachable
+
+### Activity (v5.0)
+- Sidebar section with an unread badge; persisted run history for backups, restores, queue runs and cleanups
+- Grouped by day (Today / Yesterday / full date), filterable by outcome, kind, profile and free text
+- Each row: status glyph, profile name, label, trigger badge (manual / scheduled / queue), the counters that actually moved, duration and time
+- Expanding a row shows the captured log excerpt — every warning and error plus the last lines of the run — selectable and copyable
+- Stored as `~/Library/Application Support/NestVaultClient/activity.json`, capped at 400 events; a corrupt file is moved aside as `activity.json.bak` rather than silently discarded
+- `ActivityEvent` decodes with `decodeIfPresent` on every non-identity field, so adding a field in a later version does not erase existing history
 
 ### Backups (Server Browser)
 - 3-panel `HStack` layout: backups → versions → files
@@ -146,7 +162,7 @@ NestVault_Xcode/
 - Respects network reachability, battery state, and active backup lock
 - Shows next run date in editor and last run time in detail view
 - A schedule that has never run anchors to the moment it was enabled (not to the distant past), so a freshly configured daily/weekly schedule fires at its configured time instead of immediately
-- Local notifications (`UserNotifications`) report completion or failure for scheduled individual backups and scheduled queue runs — the only reliable signal while the app runs as a menu-bar accessory, since the Dock bounce is invisible without a Dock icon
+- Local notifications (`UserNotifications`) report completion or failure — the only reliable signal while the app runs as a menu-bar accessory, since the Dock bounce is invisible without a Dock icon. Since v5.0 the policy lives in `RunRecorder`: scheduled runs and queue summaries always notify; manual runs notify on failure, or on success only when the app is not frontmost; per-item queue runs and cancellations never do. Tapping a notification brings the app forward and opens the Activity screen
 
 ### Cleanup
 - Mode: all backups or specific label
@@ -243,11 +259,20 @@ The `RestoreRunner` mirrors `BackupRunner`'s structure (published state machine,
 
 ## Local Persistence
 
+**Application Support** (`~/Library/Application Support/NestVaultClient/`):
+
+| File | Content |
+|------|---------|
+| `activity.json` | Run history — up to 400 `ActivityEvent` records (v5.0+) |
+| `{label}_hashcache.json` | Per-label sha256 cache used to skip re-hashing unchanged files |
+
 **UserDefaults:**
 
 | Key | Content |
 |-----|---------|
 | `server_url` | Server URL |
+| `activity.lastSeenDate` | Timestamp of the newest event the user has seen — drives the Activity badge |
+| `dashboard.showOthers` | Bool — whether "Other backups on the server" is expanded |
 | `backupProfiles_v1` | JSON array of `BackupProfile` (includes `BackupSchedule`, `lastRun`, `smartSkip`, `accumulate`, `lastFullBackupDate`) |
 | `schedule.pauseOnBattery` | Bool — pause when on battery |
 | `schedule.minBatteryPercent` | Int — minimum battery level to run |
@@ -311,6 +336,19 @@ Swagger UI: `http://<pi-ip>:8000/docs`
 ---
 
 ## Changelog
+
+### 5.0.0
+
+| Componente | Mudança |
+|---|---|
+| **`ActivityLog.swift` (novo) — histórico** | Modelo `ActivityEvent` (backup / restore / fila / limpeza) persistido em `~/Library/Application Support/NestVaultClient/activity.json`, cap de 400 eventos com poda por histerese, contagem de não-lidos ancorada em data (`activity.lastSeenDate`) e não em contador, decoder à mão com `decodeIfPresent` para não apagar histórico ao evoluir o schema, e arquivo corrompido movido para `.bak` em vez de sobrescrito |
+| **`RunRecorder.swift` (novo) — funil de conclusão** | **Correção de bug:** `lastRun`/`lastRunStatus` eram gravados apenas por execuções agendadas — runs manuais e de fila deixavam o perfil parecendo nunca executado. Agora os três caminhos passam por um único ponto, ancorado num `defer` dentro de `BackupRunner.run` que cobre os oito pontos de saída (incluindo cancelamento e o sucesso antecipado do smart skip). Um `assert` em DEBUG impede que um novo call site esqueça de se registrar |
+| **`ActivityView.swift` (novo) — tela Atividade** | Nova seção na sidebar com badge de não-lidos: histórico agrupado por dia, filtros por resultado/tipo/perfil/texto, e trecho de log por evento (todos os warnings e erros mais as últimas linhas) selecionável e copiável |
+| **`DashboardView.swift` — foco na máquina** | Dashboard deixa de ser uma lista crua do servidor: **"Nesta máquina"** vem primeiro, juntando cada perfil local ao seu backup no servidor pelo `label` (aparado e case-insensitive), com glyph de estado, última e próxima execução, progresso ao vivo e botões Executar / Executar todos. Perfis sem contrapartida no servidor, sem label ou sem origem aparecem explicitamente. Abaixo, atividade recente e **"Outros backups no servidor"** recolhível |
+| **`ScheduleManager.swift`** | `nextRun(for:)` e `anyRunner(for:)` extraídos para o Dashboard não depender de estado interno; persistência e notificação de execuções agendadas migradas para `RunRecorder` |
+| **Notificações** | Passam a cobrir runs manuais (só quando o app não está em foco, ou sempre em caso de falha) e restaurações; categoria `nv.run` e `userInfo` levam o toque da notificação direto para a tela Atividade, mesmo com a janela principal fechada |
+| **`CleanupView.swift`** | Limpeza — uma operação destrutiva no servidor — passa a ser registrada no histórico, não só no bloco de resultado transitório da tela |
+| **Limpeza de código morto** | `VersionDetailView.swift` removido: estava fora do target desde sempre e não compilava (referenciava `VersionInfo`/`FileInfo`, tipos que não existem) |
 
 ### 4.0.0
 

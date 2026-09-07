@@ -4,6 +4,7 @@ enum NavItem: String, CaseIterable, Identifiable {
     case dashboard    = "nav.dashboard"
     case backups      = "nav.backups"
     case configs      = "nav.my_backups"
+    case activity     = "nav.activity"
     case cleanup      = "nav.cleanup"
 
     var id: String { rawValue }
@@ -13,6 +14,7 @@ enum NavItem: String, CaseIterable, Identifiable {
         case .dashboard: return "gauge.with.dots.needle.33percent"
         case .backups:   return "externaldrive"
         case .configs:   return "arrow.up.to.line.compact"
+        case .activity:  return "clock.badge.checkmark"
         case .cleanup:   return "trash.slash"
         }
     }
@@ -21,6 +23,7 @@ enum NavItem: String, CaseIterable, Identifiable {
 struct ContentView: View {
     @EnvironmentObject var api:   APIService
     @EnvironmentObject var store: ConfigStore
+    @EnvironmentObject var activity: ActivityLog
     @State private var selection: NavItem? = .dashboard
 
     var body: some View {
@@ -28,19 +31,34 @@ struct ContentView: View {
             SidebarView(selection: $selection)
         } detail: {
             switch selection {
-            case .dashboard, .none: DashboardView()
+            case .dashboard, .none: DashboardView(selection: $selection)
             case .backups:          BackupsView()
             case .configs:          BackupConfigsView()
+            case .activity:         ActivityView()
             case .cleanup:          CleanupView()
             }
         }
         .navigationSplitViewStyle(.balanced)
+        // Consumes the navigation intent set by a notification tap or a "see all" button.
+        .onChange(of: activity.wantsActivityTab) { _, want in
+            guard want else { return }
+            selection = .activity
+            activity.wantsActivityTab = false
+        }
+        .onAppear {
+            // The window may have opened after the tap that set the intent.
+            if activity.wantsActivityTab {
+                selection = .activity
+                activity.wantsActivityTab = false
+            }
+        }
     }
 }
 
 // MARK: - Sidebar
 struct SidebarView: View {
     @EnvironmentObject var api: APIService
+    @EnvironmentObject var activity: ActivityLog
     @Binding var selection: NavItem?
 
     var body: some View {
@@ -75,6 +93,8 @@ struct SidebarView: View {
             List(NavItem.allCases, selection: $selection) { item in
                 Label(LocalizedStringKey(item.rawValue), systemImage: item.icon)
                     .tag(item)
+                    // .badge(Int) renders nothing at 0, so no conditional view needed.
+                    .badge(item == .activity ? min(activity.unreadCount, 99) : 0)
                     .padding(.vertical, 2)
             }
             .listStyle(.sidebar)

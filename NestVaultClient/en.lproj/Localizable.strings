@@ -437,3 +437,72 @@
 "restore.cancelled"             = "Restore cancelled — already restored files were kept.";
 "restore.partial_warning"       = "Partial restore: %d file(s) with errors.";
 "restore.summary"               = "Restored: %d  Skipped: %d  Errors: %d";
+
+/* ── v5.0.0 — Activity ──────────────────────────────────────────── */
+"nav.activity"                   = "Activity";
+
+"activity.title"                 = "Activity";
+"activity.subtitle"              = "%d events";
+"activity.empty"                 = "No activity yet";
+"activity.empty_hint"            = "Backups, restores and cleanups show up here as soon as they run.";
+"activity.no_results"            = "No events found";
+"activity.no_results_hint"       = "No event matches the active filters.";
+"activity.clear_filters"         = "Clear filters";
+"activity.mark_read"             = "Mark all as read";
+"activity.clear_history"         = "Clear history…";
+"activity.clear_history_title"   = "Clear the entire history?";
+"activity.clear_history_msg"     = "Every recorded event will be permanently removed. Backups on the server are not affected.";
+"activity.search"                = "Filter";
+"activity.filter.kind"           = "Type";
+"activity.filter.outcome"        = "Outcome";
+"activity.filter.profile"        = "Profile";
+"activity.filter.all"            = "All";
+"activity.kind.backup"           = "Backup";
+"activity.kind.restore"          = "Restore";
+"activity.kind.queue"            = "Queue";
+"activity.kind.cleanup"          = "Cleanup";
+"activity.outcome.done"          = "Completed";
+"activity.outcome.failed"        = "Failed";
+"activity.outcome.cancelled"     = "Cancelled";
+"activity.outcome.skipped"       = "No changes";
+"activity.trigger.manual"        = "manual";
+"activity.trigger.scheduled"     = "scheduled";
+"activity.trigger.queued"        = "queue";
+"activity.today"                 = "Today";
+"activity.yesterday"             = "Yesterday";
+"activity.duration.seconds"      = "%ds";
+"activity.duration.minutes"      = "%dm %ds";
+"activity.duration.hours"        = "%dh %dm";
+"activity.log_excerpt"           = "Log excerpt";
+"activity.copy_log"              = "Copy";
+"activity.no_log"                = "No log recorded";
+"activity.smart_skip"            = "No changes (smart skip)";
+
+"dashboard.machine.title"        = "On this Mac";
+"dashboard.machine.subtitle"     = "%d profiles";
+"dashboard.machine.empty"        = "No backups configured";
+"dashboard.machine.empty_hint"   = "Create a profile under My Backups to start sending files to the server.";
+"dashboard.machine.go_configure" = "Configure backups";
+"dashboard.machine.never_run"    = "Never run";
+"dashboard.machine.not_on_server" = "%@ — not on the server yet";
+"dashboard.machine.no_label"     = "No label configured";
+"dashboard.machine.no_source"    = "No source folder configured";
+"dashboard.machine.next_run"     = "next";
+"dashboard.machine.run"          = "Run";
+"dashboard.machine.view"         = "View";
+"dashboard.machine.run_all"      = "Run all…";
+"dashboard.machine.busy"         = "This label is already backing up elsewhere";
+"dashboard.machine.disabled"     = "Profile disabled";
+"dashboard.others.title"         = "Other backups on the server";
+"dashboard.others.subtitle"      = "%d backups · %@";
+"dashboard.others.empty"         = "No other backups on the server.";
+"dashboard.recent.title"         = "Recent activity";
+"dashboard.recent.see_all"       = "See all";
+"dashboard.recent.empty"         = "Nothing has run on this machine yet.";
+"dashboard.last_run"             = "last run";
+
+"menubar.activity"               = "View activity";
+"menubar.activity_empty"         = "No recent activity";
+
+"notify.restore_title"           = "Restore complete";
+"notify.restore_body"            = "%@ — %d restored, %d errors";

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct CleanupView: View {
     @EnvironmentObject var api: APIService
+    @EnvironmentObject var activity: ActivityLog
 
     @State private var mode:         CleanupMode = .all
     @State private var selectedLabel = ""
@@ -280,6 +281,7 @@ struct CleanupView: View {
         hasRun    = false
         runError  = nil
         results   = []
+        let startedAt = Date()
 
         Task {
             switch mode {
@@ -300,9 +302,33 @@ struct CleanupView: View {
                 }
             }
             hasRun = !results.isEmpty
+            recordActivity(startedAt: startedAt)
             await api.fetchBackups()
             isRunning = false
         }
+    }
+
+    /// Cleanup is a destructive server operation — it belongs in the history alongside
+    /// backups and restores, not only in this screen's transient result block.
+    private func recordActivity(startedAt: Date) {
+        var counters = ActivityEvent.Counters()
+        counters.itemsDone = results.reduce(0) { $0 + $1.removed }
+        counters.errors    = runError == nil ? 0 : 1
+
+        activity.append(ActivityEvent(
+            startedAt:   startedAt,
+            kind:        .cleanup,
+            trigger:     .manual,
+            profileId:   nil,
+            profileName: L("activity.kind.cleanup"),
+            label:       mode == .specific ? selectedLabel : "",
+            outcome:     runError == nil ? .done : .failed,
+            counters:    counters,
+            detail:      L("cleanup.keep_count_fmt", keepCount),
+            logExcerpt:  runError.map {
+                [ActivityEvent.LogLine(text: $0, kind: .error)]
+            } ?? []
+        ))
     }
 }
 

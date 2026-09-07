@@ -43,6 +43,13 @@ final class BackupRunner: ObservableObject {
     /// Used by ScheduleManager to decide whether to update lastFullBackupDate.
     @Published var wasFullBackup: Bool = true
 
+    /// Called exactly once when `run(profile:)` returns, on every exit path.
+    /// Set by whoever creates the runner — see `RunRecorder.attach`.
+    /// Not @Published: it drives persistence and notifications, never the UI.
+    /// The closure receives the runner as a parameter and MUST NOT capture it,
+    /// otherwise the runner would keep itself alive.
+    var onFinish: (@MainActor (BackupRunner, BackupProfile, Date) -> Void)?
+
     struct LogEntry: Identifiable {
         let id   = UUID()
         let text: String
@@ -190,6 +197,16 @@ final class BackupRunner: ObservableObject {
         lastStatsTick  = .distantPast
         wasFullBackup  = true
         var serverError = false
+
+        // run() has eight exit points (six early returns plus the natural end), so the
+        // completion hook goes in a defer rather than at each one — that way a new exit
+        // path added later can't silently skip recording the run.
+        let startedAt = Date()
+        defer { onFinish?(self, profile, startedAt) }
+        #if DEBUG
+        assert(onFinish != nil,
+               "BackupRunner.run without RunRecorder.attach — lastRun and the activity event would be lost")
+        #endif
 
         let label  = profile.label
         let source = profile.sourcePath

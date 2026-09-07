@@ -20,6 +20,7 @@ final class ScheduleManager: ObservableObject {
     private weak var api: APIService?
     private weak var store: ConfigStore?
     private weak var power: PowerMonitor?
+    private weak var activity: ActivityLog?
     @Published var activeRunner: BackupRunner?
 
     // Manual single-run tracking
@@ -70,10 +71,11 @@ final class ScheduleManager: ObservableObject {
         )
     }
 
-    func bind(api: APIService, store: ConfigStore, power: PowerMonitor) {
-        self.api   = api
-        self.store = store
-        self.power = power
+    func bind(api: APIService, store: ConfigStore, power: PowerMonitor, activity: ActivityLog) {
+        self.api      = api
+        self.store    = store
+        self.power    = power
+        self.activity = activity
     }
 
     func start() {
@@ -154,51 +156,30 @@ final class ScheduleManager: ObservableObject {
     // MARK: - Scheduled Queue Run
 
     private func runScheduledQueue(profiles: [BackupProfile]) async {
-        guard let api else { return }
-        let q = BackupQueue(api: api, profiles: profiles)
+        guard let api, let store, let activity else { return }
+        let q = BackupQueue(api: api, profiles: profiles, store: store, activity: activity)
         registerQueue(q)
         queueScheduleLastRun = Date()
-        await q.run()
+        // Per-item events and the queue summary (including its notification) are
+        // recorded by BackupQueue itself, through RunRecorder.
+        await q.run(trigger: .scheduled)
         clearQueue(q)
-        BackupNotifier.notify(
-            title: L("notify.queue_title"),
-            body:  L("notify.queue_body", q.doneCount, q.failedCount))
     }
 
     // MARK: - Individual Profile Run
 
     private func runScheduled(profile: BackupProfile) async {
-        guard let api, let store else { return }
+        guard let api, let store, let activity else { return }
 
         isRunningScheduled = true
         currentProfileId = profile.id
 
         let runner = BackupRunner(api: api)
+        // Persisting lastRun/lastRunStatus and notifying now live in RunRecorder, so
+        // every entry point (scheduled, manual, queued) behaves identically.
+        RunRecorder.attach(runner, trigger: .scheduled, store: store, activity: activity)
         self.activeRunner = runner
         await runner.run(profile: profile)
-
-        // Persist last run
-        var updated = profile
-        updated.lastRun = Date()
-        switch runner.status {
-        case .done:
-            updated.lastRunStatus = "done"
-            BackupNotifier.notify(
-                title: L("notify.done_title"),
-                body:  L("notify.done_body", profile.name,
-                         runner.stats.uploaded, runner.stats.registered, runner.stats.errors))
-        case .failed:
-            updated.lastRunStatus = "failed"
-            BackupNotifier.notify(
-                title: L("notify.failed_title"),
-                body:  L("notify.failed_body", profile.name))
-        case .cancelled: updated.lastRunStatus = "cancelled"
-        default:         updated.lastRunStatus = "unknown"
-        }
-        if runner.wasFullBackup && runner.status == .done {
-            updated.lastFullBackupDate = Date()
-        }
-        store.update(updated)
 
         activeRunner = nil
         currentProfileId = nil
@@ -235,13 +216,29 @@ final class ScheduleManager: ObservableObject {
     func nextScheduledRun() -> (profile: BackupProfile, date: Date)? {
         guard let store else { return nil }
         let candidates: [(BackupProfile, Date)] = store.profiles.compactMap { p in
-            guard p.enabled, p.schedule.enabled,
-                  let next = p.schedule.nextRun(after: Date(),
-                                                lastRun: p.lastRun ?? profileAnchors[p.id])
-            else { return nil }
+            guard let next = nextRun(for: p) else { return nil }
             return (p, next)
         }
         return candidates.min(by: { $0.1 < $1.1 })
+    }
+
+    /// Next scheduled run for a single profile. Shares the anchor fallback with
+    /// `nextScheduledRun()` so the two can never disagree.
+    func nextRun(for profile: BackupProfile) -> Date? {
+        guard profile.enabled, profile.schedule.enabled else { return nil }
+        return profile.schedule.nextRun(after: Date(),
+                                        lastRun: profile.lastRun ?? profileAnchors[profile.id])
+    }
+
+    /// Any runner currently processing this profile — manual, scheduled, or the queue's
+    /// current item. `runnerIfActive` deliberately excludes the queue (it drives the
+    /// re-attach semantics of the runner sheet), so this is a separate, wider query.
+    func anyRunner(for profileId: UUID) -> BackupRunner? {
+        if let r = runnerIfActive(for: profileId) { return r }
+        if let q = activeQueue, q.status == .running,
+           q.currentProfile?.id == profileId,
+           let r = q.currentRunner, r.status == .running { return r }
+        return nil
     }
 
     /// Active runner for this profile, if one is running (manual or scheduled) —
@@ -280,19 +277,30 @@ final class ScheduleManager: ObservableObject {
 /// the Dock bounce is invisible while the app runs as a menu-bar accessory.
 enum BackupNotifier {
 
+    /// Category identifier — tapping a notification carrying it opens the Activity screen.
+    static let runCategory = "nv.run"
+
     static func requestAuthorizationIfNeeded() {
         let center = UNUserNotificationCenter.current()
+        center.setNotificationCategories([
+            UNNotificationCategory(identifier: runCategory, actions: [],
+                                   intentIdentifiers: [], options: [])
+        ])
         center.getNotificationSettings { settings in
             guard settings.authorizationStatus == .notDetermined else { return }
             center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
         }
     }
 
-    static func notify(title: String, body: String) {
+    static func notify(title: String, body: String, eventId: UUID? = nil) {
         let content   = UNMutableNotificationContent()
         content.title = title
         content.body  = body
         content.sound = .default
+        content.categoryIdentifier = runCategory
+        var info: [String: Any] = ["nav": "activity"]
+        if let eventId { info["eventId"] = eventId.uuidString }
+        content.userInfo = info
         let request = UNNotificationRequest(identifier: UUID().uuidString,
                                             content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request)
