@@ -32,17 +32,22 @@ final class BackupQueue: ObservableObject {
     }
 
     private let api: APIService
+    private let store: ConfigStore
+    private let activity: ActivityLog
     private var isCancelled = false
 
-    init(api: APIService, profiles: [BackupProfile]) {
-        self.api   = api
-        self.items = profiles.map { QueueItem(profile: $0) }
+    init(api: APIService, profiles: [BackupProfile], store: ConfigStore, activity: ActivityLog) {
+        self.api      = api
+        self.store    = store
+        self.activity = activity
+        self.items    = profiles.map { QueueItem(profile: $0) }
     }
 
     // MARK: - Run
 
-    func run() async {
+    func run(trigger: ActivityEvent.Trigger = .manual) async {
         guard !items.isEmpty else { return }
+        let startedAt = Date()
         status      = .running
         isCancelled = false
         currentIndex = -1
@@ -58,6 +63,10 @@ final class BackupQueue: ObservableObject {
             DockProgress.shared.setBadge("\(i + 1)/\(items.count)")
 
             let runner = BackupRunner(api: api)
+            // Each item records its own activity event and persists lastRun; the
+            // per-item notification is suppressed in favour of one queue summary.
+            RunRecorder.attach(runner, trigger: .queued, store: store,
+                               activity: activity, notify: false)
             currentRunner = runner
             await runner.run(profile: items[i].profile)
 
@@ -75,6 +84,8 @@ final class BackupQueue: ObservableObject {
         currentIndex  = -1
         status = isCancelled ? .cancelled : .done
         DockProgress.shared.update(progress: nil)
+
+        RunRecorder.recordQueue(self, trigger: trigger, startedAt: startedAt, activity: activity)
     }
 
     func cancel() {

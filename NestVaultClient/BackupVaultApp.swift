@@ -1,8 +1,10 @@
 import SwiftUI
+import UserNotifications
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        UNUserNotificationCenter.current().delegate = self
         let nc = NotificationCenter.default
         nc.addObserver(self, selector: #selector(windowWillClose),
                        name: NSWindow.willCloseNotification, object: nil)
@@ -33,6 +35,36 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard let id = window.identifier?.rawValue else { return false }
         return id.contains("main")
     }
+
+    // MARK: - Notification taps
+
+    /// Tapping a run notification brings the app forward and routes to Activity.
+    /// The intent is sticky (ContentView clears it on consumption) so it still works
+    /// when the main window is closed at tap time and opened later.
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
+        let info = response.notification.request.content.userInfo
+        let eventId = (info["eventId"] as? String).flatMap(UUID.init(uuidString:))
+        DispatchQueue.main.async {
+            NSApp.setActivationPolicy(.regular)
+            NSApp.activate(ignoringOtherApps: true)
+            if info["nav"] as? String == "activity" {
+                ActivityLog.shared?.focusEventId = eventId
+                ActivityLog.shared?.wantsActivityTab = true
+            }
+            completionHandler()
+        }
+    }
+
+    /// Show run notifications even while the app is frontmost — the policy on whether
+    /// to post one at all already lives in RunRecorder.
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                willPresent notification: UNNotification,
+                                withCompletionHandler completionHandler:
+                                    @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .sound])
+    }
 }
 
 @main
@@ -42,6 +74,7 @@ struct NestVaultApp: App {
     @StateObject private var store    = ConfigStore()
     @StateObject private var power    = PowerMonitor()
     @StateObject private var schedule = ScheduleManager()
+    @StateObject private var activity = ActivityLog()
 
     init() {
         // TODO: Remover após algumas versões — migração de com.vcm.backupvault.app
@@ -57,6 +90,7 @@ struct NestVaultApp: App {
                 .environmentObject(store)
                 .environmentObject(power)
                 .environmentObject(schedule)
+                .environmentObject(activity)
                 .frame(minWidth: 960, idealWidth: 1160,
                        minHeight: 640, idealHeight: 780)
                 .onAppear {
@@ -90,6 +124,7 @@ struct NestVaultApp: App {
                 .environmentObject(store)
                 .environmentObject(power)
                 .environmentObject(schedule)
+                .environmentObject(activity)
         } label: {
             let img = api.isConnected
                 ? "externaldrive.badge.checkmark"
@@ -97,7 +132,7 @@ struct NestVaultApp: App {
             Image(systemName: img)
                 .symbolRenderingMode(.hierarchical)
                 .task {
-                    schedule.bind(api: api, store: store, power: power)
+                    schedule.bind(api: api, store: store, power: power, activity: activity)
                     schedule.start()
                     await api.checkHealth()
                     await api.fetchBackups()
@@ -112,6 +147,7 @@ struct NestVaultApp: App {
                 .environmentObject(store)
                 .environmentObject(power)
                 .environmentObject(schedule)
+                .environmentObject(activity)
         }
     }
 }

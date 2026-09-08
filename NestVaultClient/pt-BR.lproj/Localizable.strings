@@ -437,3 +437,72 @@
 "restore.cancelled"             = "Restauração cancelada — arquivos já restaurados foram mantidos.";
 "restore.partial_warning"       = "Restauração parcial: %d arquivo(s) com erro.";
 "restore.summary"               = "Restaurados: %d  Pulados: %d  Erros: %d";
+
+/* ── v5.0.0 — Atividade ─────────────────────────────────────────── */
+"nav.activity"                   = "Atividade";
+
+"activity.title"                 = "Atividade";
+"activity.subtitle"              = "%d eventos";
+"activity.empty"                 = "Nenhuma atividade ainda";
+"activity.empty_hint"            = "Backups, restaurações e limpezas aparecem aqui assim que forem executados.";
+"activity.no_results"            = "Nenhum evento encontrado";
+"activity.no_results_hint"       = "Nenhum evento corresponde aos filtros ativos.";
+"activity.clear_filters"         = "Limpar filtros";
+"activity.mark_read"             = "Marcar como lidas";
+"activity.clear_history"         = "Limpar histórico…";
+"activity.clear_history_title"   = "Limpar todo o histórico?";
+"activity.clear_history_msg"     = "Todos os eventos registrados serão removidos permanentemente. Os backups no servidor não são afetados.";
+"activity.search"                = "Filtrar";
+"activity.filter.kind"           = "Tipo";
+"activity.filter.outcome"        = "Resultado";
+"activity.filter.profile"        = "Perfil";
+"activity.filter.all"            = "Todos";
+"activity.kind.backup"           = "Backup";
+"activity.kind.restore"          = "Restauração";
+"activity.kind.queue"            = "Fila";
+"activity.kind.cleanup"          = "Limpeza";
+"activity.outcome.done"          = "Concluídos";
+"activity.outcome.failed"        = "Falhas";
+"activity.outcome.cancelled"     = "Cancelados";
+"activity.outcome.skipped"       = "Sem alterações";
+"activity.trigger.manual"        = "manual";
+"activity.trigger.scheduled"     = "agendado";
+"activity.trigger.queued"        = "fila";
+"activity.today"                 = "Hoje";
+"activity.yesterday"             = "Ontem";
+"activity.duration.seconds"      = "%ds";
+"activity.duration.minutes"      = "%dm %ds";
+"activity.duration.hours"        = "%dh %dm";
+"activity.log_excerpt"           = "Trecho do log";
+"activity.copy_log"              = "Copiar";
+"activity.no_log"                = "Sem log registrado";
+"activity.smart_skip"            = "Sem alterações (smart skip)";
+
+"dashboard.machine.title"        = "Nesta máquina";
+"dashboard.machine.subtitle"     = "%d perfis";
+"dashboard.machine.empty"        = "Nenhum backup configurado";
+"dashboard.machine.empty_hint"   = "Crie um perfil em Meus Backups para começar a enviar arquivos para o servidor.";
+"dashboard.machine.go_configure" = "Configurar backups";
+"dashboard.machine.never_run"    = "Nunca executado";
+"dashboard.machine.not_on_server" = "%@ — ainda não no servidor";
+"dashboard.machine.no_label"     = "Sem label configurado";
+"dashboard.machine.no_source"    = "Sem pasta de origem configurada";
+"dashboard.machine.next_run"     = "próxima";
+"dashboard.machine.run"          = "Executar";
+"dashboard.machine.view"         = "Ver";
+"dashboard.machine.run_all"      = "Executar todos…";
+"dashboard.machine.busy"         = "Este label já está em backup em outro lugar";
+"dashboard.machine.disabled"     = "Perfil desativado";
+"dashboard.others.title"         = "Outros backups no servidor";
+"dashboard.others.subtitle"      = "%d backups · %@";
+"dashboard.others.empty"         = "Nenhum outro backup no servidor.";
+"dashboard.recent.title"         = "Atividade recente";
+"dashboard.recent.see_all"       = "Ver tudo";
+"dashboard.recent.empty"         = "Nada executado ainda nesta máquina.";
+"dashboard.last_run"             = "última execução";
+
+"menubar.activity"               = "Ver atividade";
+"menubar.activity_empty"         = "Nenhuma atividade recente";
+
+"notify.restore_title"           = "Restauração concluída";
+"notify.restore_body"            = "%@ — %d restaurados, %d erros";

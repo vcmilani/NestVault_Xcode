@@ -12,6 +12,11 @@ final class RestoreRunner: ObservableObject {
     @Published var stats = Stats()
     @Published var currentFile = ""
 
+    /// Called exactly once when `run(_:)` returns, on every exit path.
+    /// Set by whoever creates the runner — see `RunRecorder.attach`.
+    /// The closure receives the runner as a parameter and MUST NOT capture it.
+    var onFinish: (@MainActor (RestoreRunner, Request, Date) -> Void)?
+
     enum RunStatus { case idle, running, done, failed, cancelled }
 
     enum OverwritePolicy: String, CaseIterable, Identifiable {
@@ -145,6 +150,10 @@ final class RestoreRunner: ObservableObject {
         progress    = 0
         currentFile = ""
         lastUITick  = .distantPast
+
+        // Same reasoning as BackupRunner.run — a defer covers every exit path.
+        let startedAt = Date()
+        defer { onFinish?(self, request, startedAt) }
 
         log(L("restore.starting", request.label, request.versionKey), .info)
         log(L("restore.dest", request.destRoot.path), .info)
