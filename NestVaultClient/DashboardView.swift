@@ -59,7 +59,7 @@ struct DashboardView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("dashboard.title")
                             .font(.largeTitle.bold())
-                        Text("NestVault \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")")
+                        Text(api.serverVersion.isEmpty ? L("dashboard.server_unreachable") : "Server \(api.serverVersion)")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
