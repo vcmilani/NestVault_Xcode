@@ -61,7 +61,7 @@
 "cleanup.subtitle"        = "Remove old versions and free storage";
 "cleanup.specific"        = "Specific backup";
 "cleanup.select_backup"   = "Select backup…";
-"cleanup.keep_desc_full"  = "Keeps the %d most recent versions per label. Older versions and their orphan files are permanently removed.";
+"cleanup.keep_desc_full"  = "Keeps the %d most recent versions per label. Older versions are removed (or moved to the server trash, with a user key).";
 "cleanup.preview_title"   = "Preview";
 "cleanup.removed_total"   = "%d version(s) will be removed";
 "cleanup.removed_none"    = "Nothing to remove with current settings";
@@ -169,7 +169,7 @@
 "mybackups.delete_config"       = "Delete Configuration";
 "mybackups.delete_server"       = "Delete from Server";
 "mybackups.delete_server_title" = "Delete backup from server?";
-"mybackups.delete_server_msg"   = "All data and versions for \"%@\" will be permanently deleted from the server.";
+"mybackups.delete_server_msg"   = "All data and versions for \"%@\" will be removed from the server. With an admin key the removal is permanent; with a user key they go to the server trash and an admin can restore them within the retention period.";
 "mybackups.delete_config_title" = "Delete configuration?";
 "mybackups.delete_config_msg"   = "\"%@\" will be permanently removed.";
 "mybackups.no_label"            = "no label";
@@ -279,7 +279,7 @@
 "backups.delete_btn"     = "Delete";
 "backups.delete_version" = "Delete version";
 "backups.delete_title"   = "Delete version?";
-"backups.delete_msg"     = "Version %@ will be permanently removed.";
+"backups.delete_msg"     = "Version %@ will be removed from the server. With an admin key the removal is permanent; with a user key it goes to the server trash and an admin can restore it within the retention period.";
 "backups.no_backup"      = "No backups";
 "backups.versions_count" = "%d versions · %@";
 "backups.files_count"    = "%d files";
@@ -327,7 +327,7 @@
 "cleanup.stat.freed"     = "Files removed";
 "cleanup.result_detail"  = "kept: %d  removed: %d  storage: %d";
 "cleanup.confirm_title"  = "Confirm cleanup?";
-"cleanup.confirm_msg"    = "This action is irreversible. %d version(s) will be permanently removed from the server.";
+"cleanup.confirm_msg"    = "%d version(s) will be removed from the server. With an admin key the removal is permanent; with a user key they go to the server trash.";
 
 /* Queue Schedule (Settings tab) */
 "settings.queue_schedule"          = "Schedule";
@@ -437,3 +437,86 @@
 "restore.cancelled"             = "Restore cancelled — already restored files were kept.";
 "restore.partial_warning"       = "Partial restore: %d file(s) with errors.";
 "restore.summary"               = "Restored: %d  Skipped: %d  Errors: %d";
+
+/* ── v5.0.0 — Activity ──────────────────────────────────────────── */
+"nav.activity"                   = "Activity";
+
+"activity.title"                 = "Activity";
+"activity.subtitle"              = "%d events";
+"activity.empty"                 = "No activity yet";
+"activity.empty_hint"            = "Backups, restores and cleanups show up here as soon as they run.";
+"activity.no_results"            = "No events found";
+"activity.no_results_hint"       = "No event matches the active filters.";
+"activity.clear_filters"         = "Clear filters";
+"activity.mark_read"             = "Mark all as read";
+"activity.clear_history"         = "Clear history…";
+"activity.clear_history_title"   = "Clear the entire history?";
+"activity.clear_history_msg"     = "Every recorded event will be permanently removed. Backups on the server are not affected.";
+"activity.search"                = "Filter";
+"activity.filter.kind"           = "Type";
+"activity.filter.outcome"        = "Outcome";
+"activity.filter.profile"        = "Profile";
+"activity.filter.all"            = "All";
+"activity.kind.backup"           = "Backup";
+"activity.kind.restore"          = "Restore";
+"activity.kind.queue"            = "Queue";
+"activity.kind.cleanup"          = "Cleanup";
+"activity.outcome.done"          = "Completed";
+"activity.outcome.failed"        = "Failed";
+"activity.outcome.cancelled"     = "Cancelled";
+"activity.outcome.skipped"       = "No changes";
+"activity.trigger.manual"        = "manual";
+"activity.trigger.scheduled"     = "scheduled";
+"activity.trigger.queued"        = "queue";
+"activity.today"                 = "Today";
+"activity.yesterday"             = "Yesterday";
+"activity.duration.seconds"      = "%ds";
+"activity.duration.minutes"      = "%dm %ds";
+"activity.duration.hours"        = "%dh %dm";
+"activity.log_excerpt"           = "Log excerpt";
+"activity.copy_log"              = "Copy";
+"activity.no_log"                = "No log recorded";
+"activity.smart_skip"            = "No changes (smart skip)";
+
+"dashboard.machine.title"        = "On this Mac";
+"dashboard.machine.subtitle"     = "%d profiles";
+"dashboard.machine.empty"        = "No backups configured";
+"dashboard.machine.empty_hint"   = "Create a profile under My Backups to start sending files to the server.";
+"dashboard.machine.go_configure" = "Configure backups";
+"dashboard.machine.never_run"    = "Never run";
+"dashboard.machine.not_on_server" = "%@ — not on the server yet";
+"dashboard.machine.no_label"     = "No label configured";
+"dashboard.machine.no_source"    = "No source folder configured";
+"dashboard.machine.next_run"     = "next";
+"dashboard.machine.run"          = "Run";
+"dashboard.machine.view"         = "View";
+"dashboard.machine.run_all"      = "Run all…";
+"dashboard.machine.busy"         = "This label is already backing up elsewhere";
+"dashboard.machine.disabled"     = "Profile disabled";
+"dashboard.others.title"         = "Other backups on the server";
+"dashboard.others.subtitle"      = "%d backups · %@";
+"dashboard.others.empty"         = "No other backups on the server.";
+"dashboard.recent.title"         = "Recent activity";
+"dashboard.recent.see_all"       = "See all";
+"dashboard.recent.empty"         = "Nothing has run on this machine yet.";
+"dashboard.last_run"             = "last run";
+
+"menubar.activity"               = "View activity";
+"menubar.activity_empty"         = "No recent activity";
+
+"notify.restore_title"           = "Restore complete";
+"notify.restore_body"            = "%@ — %d restored, %d errors";
+
+// Server trash / background cleanup (server 9.3+)
+"trash.sent_title"                 = "Moved to trash";
+"trash.purge_after_unknown"        = "the end of the trash retention period";
+"trash.version_sent"               = "Version %@ was moved to the server trash. An admin can restore it until %@.";
+"trash.label_sent"                 = "Backup \"%@\" was moved to the server trash. An admin can restore it until %@.";
+"server.delete_failed_title"       = "Delete failed";
+"cleanup.stat.trashed"             = "Versions in trash";
+"cleanup.stat.freed_background"    = "Storage in background";
+"cleanup.result_detail_trashed"    = "kept: %d  in trash: %d";
+"cleanup.result_detail_background" = "kept: %d  removed: %d  storage: in background";
+"cleanup.trashed_note"             = "Versions were moved to the server trash — an admin can restore them until %@.";
+"cleanup.background_note"          = "Storage cleanup continues in background on the server (see Activity in the web dashboard).";
+"runner.finalize_conflict"         = "Version was already finalized on the server with another status: %@";

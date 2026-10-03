@@ -200,14 +200,54 @@ struct CleanupResult: Codable {
     let kept: Int
     let versionsRemoved: [String]
     let storageFilesRemoved: Int
+    /// Server 9.3+: non-admin cleanup moves versions to the server trash instead of
+    /// deleting them (restorable by an admin until `purgeAfter`).
+    let trashed: Bool?
+    let purgeAfter: String?
+    /// Server 9.3.1+: admin cleanup runs in background — `storageFilesRemoved` is 0
+    /// and the real count shows up in the server's Activity page.
+    let scheduled: Bool?
 
     enum CodingKeys: String, CodingKey {
-        case kept
+        case kept, trashed, scheduled
         case versionsRemoved     = "versions_removed"
         case storageFilesRemoved = "storage_files_removed"
+        case purgeAfter          = "purge_after"
     }
 
     var removed: Int { versionsRemoved.count }
+    var isTrashed: Bool { trashed ?? false }
+    var isScheduled: Bool { scheduled ?? false }
+}
+
+// MARK: - Server trash (9.3+)
+
+/// One-shot alert content for server delete outcomes (trash notice or error).
+struct ServerNotice: Identifiable {
+    let id = UUID()
+    let title: String
+    let message: String
+
+    static func trashed(_ message: String) -> ServerNotice {
+        ServerNotice(title: L("trash.sent_title"), message: message)
+    }
+
+    static func failure(_ error: Error) -> ServerNotice {
+        ServerNotice(title: L("server.delete_failed_title"), message: error.localizedDescription)
+    }
+}
+
+/// Formats the server's `purge_after` (naive local ISO-8601, e.g. "2026-10-17T21:05:00")
+/// as a short date; falls back to a generic phrase when absent or unparseable.
+func formatPurgeAfter(_ iso: String?) -> String {
+    let parser = DateFormatter()
+    parser.locale     = Locale(identifier: "en_US_POSIX")
+    parser.timeZone   = .current
+    parser.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+    guard let iso, let date = parser.date(from: String(iso.prefix(19))) else {
+        return L("trash.purge_after_unknown")
+    }
+    return date.formatted(date: .abbreviated, time: .omitted)
 }
 
 // MARK: - VersionCreatedResponse  (POST /backups/{label}/versions)

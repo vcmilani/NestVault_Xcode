@@ -2,6 +2,7 @@ import SwiftUI
 
 struct CleanupView: View {
     @EnvironmentObject var api: APIService
+    @EnvironmentObject var activity: ActivityLog
 
     @State private var mode:         CleanupMode = .all
     @State private var selectedLabel = ""
@@ -217,6 +218,10 @@ struct CleanupView: View {
                 if hasRun && !results.isEmpty {
                     let totalRemoved = results.reduce(0) { $0 + $1.removed }
                     let totalFreed   = results.reduce(0) { $0 + $1.storageFilesRemoved }
+                    // Server 9.3+: non-admin cleanup goes to the trash; admin cleanup
+                    // frees storage in background (count known only server-side).
+                    let anyTrashed   = results.contains { $0.isTrashed && $0.removed > 0 }
+                    let anyScheduled = results.contains { $0.isScheduled }
 
                     VStack(alignment: .leading, spacing: 16) {
                         Label("cleanup.result_title", systemImage: "checkmark.seal.fill")
@@ -227,9 +232,11 @@ struct CleanupView: View {
                         HStack(spacing: 0) {
                             ResultStat(value: "\(results.count)", label: "cleanup.stat.labels")
                             Divider()
-                            ResultStat(value: "\(totalRemoved)", label: "cleanup.stat.removed")
+                            ResultStat(value: "\(totalRemoved)",
+                                       label: anyTrashed ? "cleanup.stat.trashed" : "cleanup.stat.removed")
                             Divider()
-                            ResultStat(value: "\(totalFreed)", label: "cleanup.stat.freed")
+                            ResultStat(value: anyScheduled ? "…" : "\(totalFreed)",
+                                       label: anyScheduled ? "cleanup.stat.freed_background" : "cleanup.stat.freed")
                         }
                         .frame(height: 70)
                         .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12))
@@ -240,7 +247,11 @@ struct CleanupView: View {
                             ForEach(Array(results.enumerated()), id: \.element.label) { idx, r in
                                 let icon    = r.removed > 0 ? "checkmark.circle.fill" : "minus.circle.fill"
                                 let iconClr = r.removed > 0 ? Color.green : Color.secondary
-                                let detail  = L("cleanup.result_detail", r.kept, r.removed, r.storageFilesRemoved)
+                                let detail  = r.isTrashed
+                                    ? L("cleanup.result_detail_trashed", r.kept, r.removed)
+                                    : r.isScheduled
+                                        ? L("cleanup.result_detail_background", r.kept, r.removed)
+                                        : L("cleanup.result_detail", r.kept, r.removed, r.storageFilesRemoved)
                                 HStack(spacing: 10) {
                                     Image(systemName: icon)
                                         .foregroundStyle(iconClr)
@@ -258,6 +269,18 @@ struct CleanupView: View {
                         }
                         .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12))
                         .overlay(RoundedRectangle(cornerRadius: 12).stroke(.separator.opacity(0.4), lineWidth: 1))
+
+                        if anyTrashed {
+                            let purge = results.first { $0.isTrashed && $0.removed > 0 }?.purgeAfter
+                            Label(L("cleanup.trashed_note", formatPurgeAfter(purge)), systemImage: "trash")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        if anyScheduled {
+                            Label("cleanup.background_note", systemImage: "clock.arrow.circlepath")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                     .padding(20)
                     .background(.green.opacity(0.05), in: RoundedRectangle(cornerRadius: 16))
@@ -280,6 +303,7 @@ struct CleanupView: View {
         hasRun    = false
         runError  = nil
         results   = []
+        let startedAt = Date()
 
         Task {
             switch mode {
@@ -300,9 +324,33 @@ struct CleanupView: View {
                 }
             }
             hasRun = !results.isEmpty
+            recordActivity(startedAt: startedAt)
             await api.fetchBackups()
             isRunning = false
         }
+    }
+
+    /// Cleanup is a destructive server operation — it belongs in the history alongside
+    /// backups and restores, not only in this screen's transient result block.
+    private func recordActivity(startedAt: Date) {
+        var counters = ActivityEvent.Counters()
+        counters.itemsDone = results.reduce(0) { $0 + $1.removed }
+        counters.errors    = runError == nil ? 0 : 1
+
+        activity.append(ActivityEvent(
+            startedAt:   startedAt,
+            kind:        .cleanup,
+            trigger:     .manual,
+            profileId:   nil,
+            profileName: L("activity.kind.cleanup"),
+            label:       mode == .specific ? selectedLabel : "",
+            outcome:     runError == nil ? .done : .failed,
+            counters:    counters,
+            detail:      L("cleanup.keep_count_fmt", keepCount),
+            logExcerpt:  runError.map {
+                [ActivityEvent.LogLine(text: $0, kind: .error)]
+            } ?? []
+        ))
     }
 }
 

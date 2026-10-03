@@ -4,6 +4,7 @@ struct BackupRunnerSheet: View {
     @EnvironmentObject var api:      APIService
     @EnvironmentObject var store:    ConfigStore
     @EnvironmentObject var schedule: ScheduleManager
+    @EnvironmentObject var activity: ActivityLog
     @Environment(\.dismiss) private var dismiss
 
     let profile: BackupProfile
@@ -162,14 +163,13 @@ struct BackupRunnerSheet: View {
                 Button(runner.status == .idle ? "runner.start" : "runner.run_again") {
                     let task = Task {
                         let current = store.profiles.first(where: { $0.id == profile.id }) ?? profile
+                        // lastRun, lastFullBackupDate, the activity event and the
+                        // notification are all handled by RunRecorder.
+                        RunRecorder.attach(runner, trigger: .manual,
+                                           store: store, activity: activity)
                         schedule.registerManualRunner(runner, profileId: current.id)
                         await runner.run(profile: current)
                         schedule.clearManualRunner(runner)
-                        if runner.wasFullBackup && runner.status == .done {
-                            var updated = current
-                            updated.lastFullBackupDate = Date()
-                            store.update(updated)
-                        }
                         runner.runTask = nil
                     }
                     runner.runTask = task

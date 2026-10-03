@@ -4,6 +4,7 @@ struct MenuBarView: View {
     @EnvironmentObject var api:      APIService
     @EnvironmentObject var store:    ConfigStore
     @EnvironmentObject var schedule: ScheduleManager
+    @EnvironmentObject var activity: ActivityLog
     @Environment(\.openWindow)   private var openWindow
     @Environment(\.openSettings) private var openSettings
 
@@ -159,9 +160,40 @@ struct MenuBarView: View {
 
             Divider()
 
+            // ── Recent Activity ──────────────────────────────────────
+            if !activity.recent.isEmpty {
+                VStack(spacing: 0) {
+                    ForEach(Array(activity.recent.prefix(3))) { event in
+                        HStack(spacing: 8) {
+                            Image(systemName: event.glyph)
+                                .font(.caption)
+                                .foregroundStyle(event.tint)
+                                .frame(width: 18)
+                            Text(event.profileName)
+                                .font(.caption.weight(.medium))
+                                .lineLimit(1)
+                            Spacer()
+                            Text(event.date.formatted(date: .omitted, time: .shortened))
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(.tertiary)
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 6)
+                    }
+                }
+                Divider()
+            }
+
             // ── Actions ──────────────────────────────────────────────
             VStack(spacing: 0) {
                 MenuBarActionButton(label: "menubar.open", icon: "macwindow") {
+                    NSApp.setActivationPolicy(.regular)
+                    openWindow(id: "main")
+                    NSApp.activate(ignoringOtherApps: true)
+                }
+
+                MenuBarActionButton(label: "menubar.activity", icon: "clock.badge.checkmark") {
+                    activity.wantsActivityTab = true
                     NSApp.setActivationPolicy(.regular)
                     openWindow(id: "main")
                     NSApp.activate(ignoringOtherApps: true)

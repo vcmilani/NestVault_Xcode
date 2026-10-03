@@ -15,6 +15,7 @@ struct RestoreContext: Identifiable {
 
 struct RestoreSheet: View {
     @EnvironmentObject var store: ConfigStore
+    @EnvironmentObject var activity: ActivityLog
     @Environment(\.dismiss) private var dismiss
 
     let context: RestoreContext
@@ -282,6 +283,7 @@ struct RestoreSheet: View {
             stripPrefix: stripPrefix,
             policy:      policy,
             workers:     profile?.workers ?? 4)
+        RunRecorder.attach(runner, activity: activity, profileName: profile?.name)
         runner.runTask = Task {
             await runner.run(request)
             runner.runTask = nil
