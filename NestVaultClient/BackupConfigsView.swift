@@ -14,7 +14,7 @@ struct BackupConfigsView: View {
     @State private var showDelete   = false
     @State private var showQueue    = false
     @State private var showDeleteBackup = false
-    @State private var deleteBackupError: String?
+    @State private var deleteNotice:     ServerNotice?
     @State private var showImport       = false
 
     var body: some View {
@@ -127,16 +127,28 @@ struct BackupConfigsView: View {
                 guard let label = selected?.label else { return }
                 Task {
                     do {
-                        try await api.deleteBackup(label: label)
+                        let r = try await api.deleteBackup(label: label)
+                        if r.trashed == true {
+                            deleteNotice = .trashed(L("trash.label_sent", label,
+                                                      formatPurgeAfter(r.purgeAfter)))
+                        }
                         await api.fetchBackups()
                     } catch {
-                        deleteBackupError = error.localizedDescription
+                        deleteNotice = .failure(error)
                     }
                 }
             }
         } message: {
             let name = selected?.label ?? ""
             Text(L("mybackups.delete_server_msg", name))
+        }
+        .alert(deleteNotice?.title ?? "", isPresented: Binding(
+            get: { deleteNotice != nil },
+            set: { if !$0 { deleteNotice = nil } }
+        ), presenting: deleteNotice) { _ in
+            Button("common.close", role: .cancel) {}
+        } message: { notice in
+            Text(notice.message)
         }
         .sheet(isPresented: $showAdd) {
             ProfileEditorSheet(profile: nil, defaultServer: api.serverURL) { p in

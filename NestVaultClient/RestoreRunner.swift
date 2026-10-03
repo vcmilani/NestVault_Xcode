@@ -72,35 +72,53 @@ final class RestoreRunner: ObservableObject {
 
     // MARK: - Path planning
 
+    /// Components of a server `original_path`, whatever OS recorded it. Backups store
+    /// the client's native path: "/Users/ana/x" from macOS/Linux, "C:\Users\ana\x"
+    /// (or "docs\x" with a prefix) from Windows. Backslash is only a separator for
+    /// Windows-style paths — on POSIX it's a valid filename character. The drive letter
+    /// becomes a folder ("C:\Users" → C/Users) so drives don't overwrite each other.
+    nonisolated static func pathComponents(of path: String) -> [String] {
+        var p = path
+        let hasDrive = p.range(of: #"^[A-Za-z]:(?=[\\/]|$)"#, options: .regularExpression) != nil
+        let windowsStyle = hasDrive || p.hasPrefix("\\\\") || (p.contains("\\") && !p.contains("/"))
+        if windowsStyle {
+            p = p.replacingOccurrences(of: "\\", with: "/")
+            if hasDrive { p.remove(at: p.index(after: p.startIndex)) }   // "C:" → "C"
+        }
+        return p.split(separator: "/", omittingEmptySubsequences: true)
+            .map(String.init)
+            .filter { $0 != "." }
+    }
+
     /// Maps a server path to a destination-relative path: strips `stripPrefix` when it
-    /// matches, trims leading "/", falls back to the last component when the result
-    /// would be empty. `internal static` for testability.
+    /// matches whole components ("/docs" doesn't match "/docs2/x"), falls back to the
+    /// last component when the result would be empty. `internal static` for testability.
     nonisolated static func relativePath(for originalPath: String, stripPrefix: String) -> String {
-        var rel = originalPath
-        if !stripPrefix.isEmpty, originalPath.hasPrefix(stripPrefix) {
-            rel = String(originalPath.dropFirst(stripPrefix.count))
+        var parts = pathComponents(of: originalPath)
+        let prefix = pathComponents(of: stripPrefix)
+        if !prefix.isEmpty, parts.starts(with: prefix) {
+            parts.removeFirst(prefix.count)
         }
-        while rel.hasPrefix("/") { rel.removeFirst() }
-        if rel.isEmpty {
-            rel = (originalPath as NSString).lastPathComponent
+        if parts.isEmpty {
+            return pathComponents(of: originalPath).last ?? ""
         }
-        return rel
+        return parts.joined(separator: "/")
     }
 
     /// Longest common directory prefix of the files' original paths ("" when none).
     /// Used by choose-folder restores so the destination doesn't recreate /Users/… .
+    /// Compared by component, so Windows-recorded paths share prefixes too.
     nonisolated static func commonDirectoryPrefix(of paths: [String]) -> String {
         guard let first = paths.first else { return "" }
-        var common = (first as NSString).deletingLastPathComponent
+        var common = Array(pathComponents(of: first).dropLast())
         for path in paths.dropFirst() {
-            let dir = (path as NSString).deletingLastPathComponent
-            while !common.isEmpty, common != "/",
-                  !(dir == common || dir.hasPrefix(common + "/")) {
-                common = (common as NSString).deletingLastPathComponent
-            }
-            if common.isEmpty || common == "/" { return "" }
+            let dir = pathComponents(of: path).dropLast()
+            var n = 0
+            while n < common.count, n < dir.count, common[n] == dir[dir.startIndex + n] { n += 1 }
+            common.removeLast(common.count - n)
+            if common.isEmpty { return "" }
         }
-        return common == "/" ? "" : common
+        return common.isEmpty ? "" : "/" + common.joined(separator: "/")
     }
 
     struct Plan {
@@ -115,7 +133,7 @@ final class RestoreRunner: ObservableObject {
         let rootPath = destRoot.standardizedFileURL.path
         var seenDest: [String: Int] = [:]   // destPath -> index in items (last wins)
         for file in files {
-            let name = (file.originalPath as NSString).lastPathComponent
+            let name = pathComponents(of: file.originalPath).last ?? ""
             if systemIgnoredNames.contains(name) {
                 plan.skippedSystem += 1
                 continue
@@ -260,7 +278,7 @@ final class RestoreRunner: ObservableObject {
             }
         }
 
-        currentFile = (item.file.originalPath as NSString).lastPathComponent
+        currentFile = Self.pathComponents(of: item.file.originalPath).last ?? item.file.originalPath
 
         var lastError: Error?
         for attempt in 1...maxRetries {

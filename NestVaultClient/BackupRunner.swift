@@ -921,7 +921,10 @@ final class BackupRunner: ObservableObject {
                     default: break
                     }
                 }
-                try? await Task.sleep(nanoseconds: UInt64(500_000_000) * UInt64(attempt))
+                // 503 = server can't reach any readable copy right now (disk offline,
+                // server 9.3+) — give it real time to come back instead of 0.5 s.
+                let backoff: UInt64 = (error as NSError).code == 503 ? 5_000_000_000 : 500_000_000
+                try? await Task.sleep(nanoseconds: backoff * UInt64(attempt))
             }
         }
         throw lastError ?? CancellationError()
@@ -1082,9 +1085,16 @@ final class BackupRunner: ObservableObject {
 
         for attempt in 1...3 {
             do {
-                let (_, resp) = try await URLSession.shared.data(for: req)
-                if let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) {
-                    return
+                let (data, resp) = try await URLSession.shared.data(for: req)
+                if let http = resp as? HTTPURLResponse {
+                    if (200..<300).contains(http.statusCode) { return }
+                    // Server 9.3+: a finalized version is immutable — 409 means it was
+                    // already closed with another status. Retrying can't change that.
+                    if http.statusCode == 409 {
+                        let msg = String(data: data, encoding: .utf8) ?? ""
+                        log(L("runner.finalize_conflict", String(msg.prefix(200))), .warning)
+                        return
+                    }
                 }
             } catch { }
             if attempt < 3 { try? await Task.sleep(nanoseconds: 2_000_000_000) }

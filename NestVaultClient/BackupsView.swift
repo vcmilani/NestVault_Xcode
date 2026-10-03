@@ -12,6 +12,7 @@ struct BackupsView: View {
     @State private var backupSearch     = ""
     @State private var showDeleteVersion = false
     @State private var pendingDelete:   BackupVersion?
+    @State private var deleteNotice:    ServerNotice?
     @State private var restoreContext:  RestoreContext?
 
     var filteredBackups: [BackupSummary] {
@@ -34,13 +35,30 @@ struct BackupsView: View {
         .alert("backups.delete_title", isPresented: $showDeleteVersion, presenting: pendingDelete) { ver in
             Button("common.cancel", role: .cancel) {}
             Button("backups.delete_btn", role: .destructive) {
+                guard let backup = selectedBackup else { return }
                 Task {
-                    _ = try? await api.deleteVersion(label: selectedBackup!.label, versionKey: ver.versionKey)
-                    if let backup = selectedBackup { await loadVersions(for: backup) }
+                    do {
+                        let r = try await api.deleteVersion(label: backup.label, versionKey: ver.versionKey)
+                        if r.trashed == true {
+                            deleteNotice = .trashed(L("trash.version_sent", ver.versionKey,
+                                                      formatPurgeAfter(r.purgeAfter)))
+                        }
+                    } catch {
+                        deleteNotice = .failure(error)
+                    }
+                    await loadVersions(for: backup)
                 }
             }
         } message: { ver in
             Text(L("backups.delete_msg", ver.versionKey))
+        }
+        .alert(deleteNotice?.title ?? "", isPresented: Binding(
+            get: { deleteNotice != nil },
+            set: { if !$0 { deleteNotice = nil } }
+        ), presenting: deleteNotice) { _ in
+            Button("common.close", role: .cancel) {}
+        } message: { notice in
+            Text(notice.message)
         }
         .sheet(item: $restoreContext) { context in
             RestoreSheet(context: context, api: api)

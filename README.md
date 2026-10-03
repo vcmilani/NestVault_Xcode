@@ -117,7 +117,7 @@ NestVault_Xcode/
 
 ### Restore
 - Two entry points: "Restore version…" (versions context menu) and per-file/subset restore from the files table (multi-select or currently filtered rows)
-- **Destination:** *Original location* (resolved from the local profile matching the backup label — `sourcePath` + `prefix`; disabled when no matching profile exists) or *Choose folder…* (`NSOpenPanel`); for a partial selection, the destination root is the files' longest common directory so the folder structure isn't recreated from `/`
+- **Destination:** *Original location* (resolved from the local profile matching the backup label — `sourcePath` + `prefix`; disabled when no matching profile exists) or *Choose folder…* (`NSOpenPanel`); for a partial selection, the destination root is the files' longest common directory so the folder structure isn't recreated from `/`. Prefixes match whole path components, and paths recorded by Windows clients (`C:\...`, `\\nas\...`) restore with the drive letter as a folder
 - **Overwrite policy:** Keep existing (never overwrite; local file is SHA-256'd and skipped if identical) / Overwrite changed only (default) / Overwrite everything
 - Parallel download (`RestoreRunner`, workers from the source profile or 4), each file verified against its catalogued SHA-256 after download before being committed to disk — a hash mismatch is retried, never silently accepted
 - Retries (3×, exponential backoff) only for transient failures (`503` degraded replicas, network errors); `404`/`410` (unknown/physically gone content) fail immediately per file without blocking the rest
@@ -134,7 +134,7 @@ NestVault_Xcode/
 - Run individual backup (sheet with live log)
 - Run queue with selection UI and per-item progress
 - Duplicate-run guard: reopening the runner sheet for a profile already backing up (manual, scheduled, or as the current queue item) re-attaches to the active runner instead of starting a second one; the label stays disabled elsewhere until it finishes
-- Delete backup from server (context menu)
+- Delete backup from server (context menu) — on server 9.3+ with a user key it goes to the server trash; the app shows until when an admin can restore it
 - Python equivalent command preview
 
 ### Smart Skip (v3.0)
@@ -201,10 +201,10 @@ NestVault_Xcode/
 | `POST` | `/register/batch` | Register up to 500 files whose content already exists in one request — one server commit per batch instead of one per file (v7.8+; client batches at 200) |
 | `POST` | `/upload` | Upload file (binary) or register (header only) |
 | `POST` | `/sync` | Mark absent files as deleted (`existing_paths`) |
-| `PATCH` | `/backups/{label}/versions/{key}` | Finalize version (`status: done/failed`) |
-| `POST` | `/backups/{label}/cleanup` | Remove old versions (`keep`) |
-| `DELETE` | `/backups/{label}/versions/{key}` | Delete version |
-| `DELETE` | `/backups/{label}` | Delete entire backup |
+| `PATCH` | `/backups/{label}/versions/{key}` | Finalize version (`status: done/failed`) — `409` on server 9.3+ means it was already finalized with another status (not retried) |
+| `POST` | `/backups/{label}/cleanup` | Remove old versions (`keep`) — server 9.3+: `trashed`/`purge_after` for user keys, `scheduled` (storage freed in background) for admin keys |
+| `DELETE` | `/backups/{label}/versions/{key}` | Delete version — server 9.3+: user keys send it to the server trash (`trashed`, `purge_after`) |
+| `DELETE` | `/backups/{label}` | Delete entire backup — server 9.3+: user keys send it to the server trash (`trashed`, `purge_after`) |
 
 ### Upload Protocol
 

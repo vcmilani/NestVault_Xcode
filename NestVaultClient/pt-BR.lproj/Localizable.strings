@@ -61,7 +61,7 @@
 "cleanup.subtitle"        = "Remover versões antigas e liberar espaço";
 "cleanup.specific"        = "Backup específico";
 "cleanup.select_backup"   = "Selecione um backup…";
-"cleanup.keep_desc_full"  = "Mantém as %d versões mais recentes por label. Versões mais antigas e seus arquivos órfãos são removidos permanentemente.";
+"cleanup.keep_desc_full"  = "Mantém as %d versões mais recentes por label. Versões mais antigas são removidas (ou vão para a lixeira do servidor, com chave de usuário).";
 "cleanup.preview_title"   = "Pré-visualização";
 "cleanup.removed_total"   = "%d versão(ões) será(ão) removida(s)";
 "cleanup.removed_none"    = "Nada a remover com as configurações atuais";
@@ -198,7 +198,7 @@
 "mybackups.delete_config"       = "Excluir Configuração";
 "mybackups.delete_server"       = "Excluir do Servidor";
 "mybackups.delete_server_title" = "Excluir backup do servidor?";
-"mybackups.delete_server_msg"   = "Todos os dados e versões de \"%@\" serão apagados permanentemente do servidor.";
+"mybackups.delete_server_msg"   = "Todos os dados e versões de \"%@\" serão removidos do servidor. Com chave de admin a remoção é permanente; com chave de usuário vão para a lixeira do servidor e o admin pode restaurá-los dentro do prazo.";
 "mybackups.delete_config_title" = "Excluir configuração?";
 "mybackups.delete_config_msg"   = "\"%@\" será removida permanentemente.";
 "mybackups.no_label"            = "sem label";
@@ -308,7 +308,7 @@
 "backups.delete_btn"     = "Excluir";
 "backups.delete_version" = "Excluir versão";
 "backups.delete_title"   = "Excluir versão?";
-"backups.delete_msg"     = "A versão %@ será permanentemente removida.";
+"backups.delete_msg"     = "A versão %@ será removida do servidor. Com chave de admin a remoção é permanente; com chave de usuário ela vai para a lixeira do servidor e o admin pode restaurá-la dentro do prazo.";
 "backups.no_backup"      = "Nenhum backup";
 "backups.versions_count" = "%d versões · %@";
 "backups.files_count"    = "%d arquivos";
@@ -327,7 +327,7 @@
 "cleanup.stat.freed"     = "Arquivos removidos";
 "cleanup.result_detail"  = "mantidas: %d  removidas: %d  storage: %d";
 "cleanup.confirm_title"  = "Confirmar limpeza?";
-"cleanup.confirm_msg"    = "Esta ação é irreversível. %d versão(ões) serão permanentemente removidas do servidor.";
+"cleanup.confirm_msg"    = "%d versão(ões) serão removidas do servidor. Com chave de admin a remoção é permanente; com chave de usuário vão para a lixeira do servidor.";
 
 /* Queue Schedule (aba Configurações) */
 "settings.queue_schedule"          = "Agendamento";
@@ -506,3 +506,17 @@
 
 "notify.restore_title"           = "Restauração concluída";
 "notify.restore_body"            = "%@ — %d restaurados, %d erros";
+
+// Server trash / background cleanup (server 9.3+)
+"trash.sent_title"                 = "Enviado para a lixeira";
+"trash.purge_after_unknown"        = "o fim do prazo da lixeira";
+"trash.version_sent"               = "A versão %@ foi para a lixeira do servidor. O admin pode restaurá-la até %@.";
+"trash.label_sent"                 = "O backup \"%@\" foi para a lixeira do servidor. O admin pode restaurá-lo até %@.";
+"server.delete_failed_title"       = "Falha ao excluir";
+"cleanup.stat.trashed"             = "Versões na lixeira";
+"cleanup.stat.freed_background"    = "Storage em background";
+"cleanup.result_detail_trashed"    = "mantidas: %d  na lixeira: %d";
+"cleanup.result_detail_background" = "mantidas: %d  removidas: %d  storage: em background";
+"cleanup.trashed_note"             = "As versões foram para a lixeira do servidor — o admin pode restaurá-las até %@.";
+"cleanup.background_note"          = "A limpeza do storage segue em background no servidor (acompanhe em Atividade no dashboard web).";
+"runner.finalize_conflict"         = "A versão já estava finalizada no servidor com outro status: %@";

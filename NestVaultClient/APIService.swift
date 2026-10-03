@@ -13,11 +13,28 @@ struct VersionDeletedResponse: Decodable {
     let status: String
     let versionKey: String
     let filesRemovedFromStorage: Int
+    /// Server 9.3+: non-admin deletes go to the server trash (restorable by an admin
+    /// until `purgeAfter`). Absent on older servers.
+    let trashed: Bool?
+    let purgeAfter: String?
 
     enum CodingKeys: String, CodingKey {
-        case status
+        case status, trashed
         case versionKey               = "version_key"
         case filesRemovedFromStorage  = "files_removed_from_storage"
+        case purgeAfter               = "purge_after"
+    }
+}
+
+struct BackupDeletedResponse: Decodable {
+    let status: String
+    let label: String
+    let trashed: Bool?
+    let purgeAfter: String?
+
+    enum CodingKeys: String, CodingKey {
+        case status, label, trashed
+        case purgeAfter = "purge_after"
     }
 }
 
@@ -166,7 +183,8 @@ final class APIService: ObservableObject {
         }
     }
 
-    func deleteBackup(label: String) async throws {
+    @discardableResult
+    func deleteBackup(label: String) async throws -> BackupDeletedResponse {
         var req = try buildRequest("/backups/\(label.urlSafe)", method: "DELETE", body: nil)
         req.timeoutInterval = 30
         let (data, resp) = try await URLSession.shared.data(for: req)
@@ -174,6 +192,7 @@ final class APIService: ObservableObject {
             let msg = String(data: data, encoding: .utf8) ?? ""
             throw apiError(http.statusCode, msg)
         }
+        return try JSONDecoder().decode(BackupDeletedResponse.self, from: data)
     }
 
     // MARK: - Off-main decoding
