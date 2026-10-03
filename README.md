@@ -1,4 +1,4 @@
-# NestVault — macOS Client  `v5.0.0`
+# NestVault — macOS Client  `v5.1.0`
 
 Native macOS SwiftUI client for the [NestVault](https://github.com/vcmilani/NestVault) self-hosted backup server.
 
@@ -336,6 +336,19 @@ Swagger UI: `http://<pi-ip>:8000/docs`
 ---
 
 ## Changelog
+
+### 5.1.0
+
+Compatibilidade com o servidor NestVault 9.3 — nenhuma mudança quebrava o app, mas várias respostas novas eram ignoradas e a interface mostrava informação errada.
+
+| Componente | Mudança |
+|---|---|
+| **Lixeira do servidor (9.3+)** | `DELETE` de versão/backup e `POST /cleanup` com chave de usuário passam a ir para a lixeira do servidor. `VersionDeletedResponse`, `BackupDeletedResponse` (novo) e `CleanupResult` leem `trashed`/`purge_after`, e o app avisa até quando o admin pode restaurar |
+| **`CleanupView.swift`** | Limpeza de admin agora roda em background no servidor (`scheduled`, `storage_files_removed = 0`): o resultado mostra "Storage em background" em vez de 0 arquivos removidos; limpeza de usuário mostra "Versões na lixeira" |
+| **Erros de exclusão** | Exclusão de versão engolia erros (`try?`) e a de backup guardava o erro sem nunca exibi-lo — agora ambos aparecem em alerta |
+| **`BackupRunner.swift`** | `PATCH` de finalização com `409` (versão já finalizada com outro status, 9.3+) não é mais repetido; upload com `503` (nenhuma cópia legível no servidor) espera 5 s × tentativa em vez de 0,5 s |
+| **`RestoreRunner.swift`** | Prefixo comparado por componente (`/docs` não casa mais com `/docs2/x`) e caminhos gravados por clientes Windows (`C:\...`, `\\nas\...`) restaurados com a letra do drive como pasta — paridade com o cliente Python 9.3 |
+| **Textos** | Confirmações de exclusão/limpeza deixam de prometer remoção permanente: explicam o comportamento com chave de admin e de usuário |
 
 ### 5.0.0
 
